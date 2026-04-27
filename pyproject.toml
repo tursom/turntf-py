@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turntf"
+version = "0.1.0"
+description = "Async Python SDK for turntf."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Tursom K. Ulefits" }
+]
+requires-python = ">=3.11"
+dependencies = [
+  "bcrypt",
+  "httpx",
+  "protobuf",
+  "websockets>=16",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["turntf*"]
+
+[tool.setuptools.package-data]
+turntf = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
