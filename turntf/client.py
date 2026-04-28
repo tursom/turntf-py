@@ -21,6 +21,9 @@ from .errors import (
 )
 from .http import AsyncHTTPClient
 from .mapping import (
+    attachment_from_proto,
+    attachment_type_to_proto,
+    attachments_from_proto,
     blacklist_entries_from_proto,
     blacklist_entry_from_proto,
     cluster_nodes_from_proto,
@@ -41,6 +44,8 @@ from .mapping import (
 from .password import PasswordInput, plain_password
 from .store import CursorStore, MemoryCursorStore
 from .types import (
+    Attachment,
+    AttachmentType,
     BlacklistEntry,
     ClusterNode,
     CreateUserRequest,
@@ -196,6 +201,7 @@ class AsyncClient:
                     request_id=request_id,
                     target=user_ref_to_proto(target),
                     body=body,
+                    sync_mode=pb.CLIENT_MESSAGE_SYNC_MODE_UNSPECIFIED,
                 )
             )
         )
@@ -219,6 +225,7 @@ class AsyncClient:
                     body=body,
                     delivery_kind=pb.CLIENT_DELIVERY_KIND_TRANSIENT,
                     delivery_mode=delivery_mode_to_proto(delivery_mode),
+                    sync_mode=pb.CLIENT_MESSAGE_SYNC_MODE_UNSPECIFIED,
                 )
             )
         )
@@ -302,100 +309,159 @@ class AsyncClient:
             raise ProtocolError("missing status in delete_user_response")
         return result
 
-    async def subscribe_channel(self, subscriber: UserRef, channel: UserRef) -> Subscription:
-        validate_user_ref(subscriber, "subscriber")
-        validate_user_ref(channel, "channel")
+    async def upsert_attachment(
+        self,
+        owner: UserRef,
+        subject: UserRef,
+        attachment_type: AttachmentType,
+        config_json: bytes = b"{}",
+    ) -> Attachment:
+        validate_user_ref(owner, "owner")
+        validate_user_ref(subject, "subject")
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
-                subscribe_channel=pb.SubscribeChannelRequest(
+                upsert_user_attachment=pb.UpsertUserAttachmentRequest(
                     request_id=request_id,
-                    subscriber=user_ref_to_proto(subscriber),
-                    channel=user_ref_to_proto(channel),
+                    owner=user_ref_to_proto(owner),
+                    subject=user_ref_to_proto(subject),
+                    attachment_type=attachment_type_to_proto(attachment_type),
+                    config_json=config_json,
                 )
             )
         )
-        if not isinstance(result, Subscription):
-            raise ProtocolError("missing subscription in subscribe_channel_response")
+        if not isinstance(result, Attachment):
+            raise ProtocolError("missing attachment in upsert_user_attachment_response")
         return result
+
+    async def delete_attachment(
+        self,
+        owner: UserRef,
+        subject: UserRef,
+        attachment_type: AttachmentType,
+    ) -> Attachment:
+        validate_user_ref(owner, "owner")
+        validate_user_ref(subject, "subject")
+        result = await self._rpc(
+            lambda request_id: pb.ClientEnvelope(
+                delete_user_attachment=pb.DeleteUserAttachmentRequest(
+                    request_id=request_id,
+                    owner=user_ref_to_proto(owner),
+                    subject=user_ref_to_proto(subject),
+                    attachment_type=attachment_type_to_proto(attachment_type),
+                )
+            )
+        )
+        if not isinstance(result, Attachment):
+            raise ProtocolError("missing attachment in delete_user_attachment_response")
+        return result
+
+    async def list_attachments(
+        self,
+        owner: UserRef,
+        attachment_type: AttachmentType | None = None,
+    ) -> list[Attachment]:
+        validate_user_ref(owner, "owner")
+        result = await self._rpc(
+            lambda request_id: pb.ClientEnvelope(
+                list_user_attachments=pb.ListUserAttachmentsRequest(
+                    request_id=request_id,
+                    owner=user_ref_to_proto(owner),
+                    attachment_type=pb.ATTACHMENT_TYPE_UNSPECIFIED
+                    if attachment_type is None
+                    else attachment_type_to_proto(attachment_type),
+                )
+            )
+        )
+        if not isinstance(result, list):
+            raise ProtocolError("missing items in list_user_attachments_response")
+        return result
+
+    async def subscribe_channel(self, subscriber: UserRef, channel: UserRef) -> Subscription:
+        attachment = await self.upsert_attachment(
+            subscriber,
+            channel,
+            AttachmentType.CHANNEL_SUBSCRIPTION,
+            b"{}",
+        )
+        return Subscription(
+            subscriber=attachment.owner,
+            channel=attachment.subject,
+            subscribed_at=attachment.attached_at,
+            deleted_at=attachment.deleted_at,
+            origin_node_id=attachment.origin_node_id,
+        )
 
     async def create_subscription(self, subscriber: UserRef, channel: UserRef) -> Subscription:
         return await self.subscribe_channel(subscriber, channel)
 
     async def unsubscribe_channel(self, subscriber: UserRef, channel: UserRef) -> Subscription:
-        validate_user_ref(subscriber, "subscriber")
-        validate_user_ref(channel, "channel")
-        result = await self._rpc(
-            lambda request_id: pb.ClientEnvelope(
-                unsubscribe_channel=pb.UnsubscribeChannelRequest(
-                    request_id=request_id,
-                    subscriber=user_ref_to_proto(subscriber),
-                    channel=user_ref_to_proto(channel),
-                )
-            )
+        attachment = await self.delete_attachment(
+            subscriber,
+            channel,
+            AttachmentType.CHANNEL_SUBSCRIPTION,
         )
-        if not isinstance(result, Subscription):
-            raise ProtocolError("missing subscription in unsubscribe_channel_response")
-        return result
+        return Subscription(
+            subscriber=attachment.owner,
+            channel=attachment.subject,
+            subscribed_at=attachment.attached_at,
+            deleted_at=attachment.deleted_at,
+            origin_node_id=attachment.origin_node_id,
+        )
 
     async def list_subscriptions(self, subscriber: UserRef) -> list[Subscription]:
-        validate_user_ref(subscriber, "subscriber")
-        result = await self._rpc(
-            lambda request_id: pb.ClientEnvelope(
-                list_subscriptions=pb.ListSubscriptionsRequest(
-                    request_id=request_id,
-                    subscriber=user_ref_to_proto(subscriber),
-                )
+        items = await self.list_attachments(subscriber, AttachmentType.CHANNEL_SUBSCRIPTION)
+        return [
+            Subscription(
+                subscriber=attachment.owner,
+                channel=attachment.subject,
+                subscribed_at=attachment.attached_at,
+                deleted_at=attachment.deleted_at,
+                origin_node_id=attachment.origin_node_id,
             )
-        )
-        if not isinstance(result, list):
-            raise ProtocolError("missing items in list_subscriptions_response")
-        return result
+            for attachment in items
+        ]
 
     async def block_user(self, owner: UserRef, blocked: UserRef) -> BlacklistEntry:
-        validate_user_ref(owner, "owner")
-        validate_user_ref(blocked, "blocked")
-        result = await self._rpc(
-            lambda request_id: pb.ClientEnvelope(
-                block_user=pb.BlockUserRequest(
-                    request_id=request_id,
-                    owner=user_ref_to_proto(owner),
-                    blocked=user_ref_to_proto(blocked),
-                )
-            )
+        attachment = await self.upsert_attachment(
+            owner,
+            blocked,
+            AttachmentType.USER_BLACKLIST,
+            b"{}",
         )
-        if not isinstance(result, BlacklistEntry):
-            raise ProtocolError("missing entry in block_user_response")
-        return result
+        return BlacklistEntry(
+            owner=attachment.owner,
+            blocked=attachment.subject,
+            blocked_at=attachment.attached_at,
+            deleted_at=attachment.deleted_at,
+            origin_node_id=attachment.origin_node_id,
+        )
 
     async def unblock_user(self, owner: UserRef, blocked: UserRef) -> BlacklistEntry:
-        validate_user_ref(owner, "owner")
-        validate_user_ref(blocked, "blocked")
-        result = await self._rpc(
-            lambda request_id: pb.ClientEnvelope(
-                unblock_user=pb.UnblockUserRequest(
-                    request_id=request_id,
-                    owner=user_ref_to_proto(owner),
-                    blocked=user_ref_to_proto(blocked),
-                )
-            )
+        attachment = await self.delete_attachment(
+            owner,
+            blocked,
+            AttachmentType.USER_BLACKLIST,
         )
-        if not isinstance(result, BlacklistEntry):
-            raise ProtocolError("missing entry in unblock_user_response")
-        return result
+        return BlacklistEntry(
+            owner=attachment.owner,
+            blocked=attachment.subject,
+            blocked_at=attachment.attached_at,
+            deleted_at=attachment.deleted_at,
+            origin_node_id=attachment.origin_node_id,
+        )
 
     async def list_blocked_users(self, owner: UserRef) -> list[BlacklistEntry]:
-        validate_user_ref(owner, "owner")
-        result = await self._rpc(
-            lambda request_id: pb.ClientEnvelope(
-                list_blocked_users=pb.ListBlockedUsersRequest(
-                    request_id=request_id,
-                    owner=user_ref_to_proto(owner),
-                )
+        items = await self.list_attachments(owner, AttachmentType.USER_BLACKLIST)
+        return [
+            BlacklistEntry(
+                owner=attachment.owner,
+                blocked=attachment.subject,
+                blocked_at=attachment.attached_at,
+                deleted_at=attachment.deleted_at,
+                origin_node_id=attachment.origin_node_id,
             )
-        )
-        if not isinstance(result, list):
-            raise ProtocolError("missing items in list_blocked_users_response")
-        return result
+            for attachment in items
+        ]
 
     async def list_messages(self, target: UserRef, limit: int = 0) -> list[Message]:
         validate_user_ref(target, "target")
@@ -633,40 +699,22 @@ class AsyncClient:
                 value=messages_from_proto(list(env.list_messages_response.items)),
             )
             return
-        if body == "subscribe_channel_response":
+        if body == "upsert_user_attachment_response":
             self._resolve_pending(
-                env.subscribe_channel_response.request_id,
-                value=subscription_from_proto(env.subscribe_channel_response.subscription),
+                env.upsert_user_attachment_response.request_id,
+                value=attachment_from_proto(env.upsert_user_attachment_response.attachment),
             )
             return
-        if body == "unsubscribe_channel_response":
+        if body == "delete_user_attachment_response":
             self._resolve_pending(
-                env.unsubscribe_channel_response.request_id,
-                value=subscription_from_proto(env.unsubscribe_channel_response.subscription),
+                env.delete_user_attachment_response.request_id,
+                value=attachment_from_proto(env.delete_user_attachment_response.attachment),
             )
             return
-        if body == "list_subscriptions_response":
+        if body == "list_user_attachments_response":
             self._resolve_pending(
-                env.list_subscriptions_response.request_id,
-                value=subscriptions_from_proto(list(env.list_subscriptions_response.items)),
-            )
-            return
-        if body == "block_user_response":
-            self._resolve_pending(
-                env.block_user_response.request_id,
-                value=blacklist_entry_from_proto(env.block_user_response.entry),
-            )
-            return
-        if body == "unblock_user_response":
-            self._resolve_pending(
-                env.unblock_user_response.request_id,
-                value=blacklist_entry_from_proto(env.unblock_user_response.entry),
-            )
-            return
-        if body == "list_blocked_users_response":
-            self._resolve_pending(
-                env.list_blocked_users_response.request_id,
-                value=blacklist_entries_from_proto(list(env.list_blocked_users_response.items)),
+                env.list_user_attachments_response.request_id,
+                value=attachments_from_proto(list(env.list_user_attachments_response.items)),
             )
             return
         if body == "list_events_response":

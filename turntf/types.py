@@ -12,6 +12,13 @@ class DeliveryMode(str, Enum):
     ROUTE_RETRY = "route_retry"
 
 
+class AttachmentType(str, Enum):
+    CHANNEL_MANAGER = "channel_manager"
+    CHANNEL_WRITER = "channel_writer"
+    CHANNEL_SUBSCRIPTION = "channel_subscription"
+    USER_BLACKLIST = "user_blacklist"
+
+
 @dataclass(slots=True, frozen=True)
 class Credentials:
     node_id: int
@@ -75,6 +82,17 @@ class RelayAccepted:
     target_node_id: int
     recipient: UserRef
     delivery_mode: DeliveryMode
+
+
+@dataclass(slots=True)
+class Attachment:
+    owner: UserRef
+    subject: UserRef
+    attachment_type: AttachmentType
+    config_json: bytes
+    attached_at: str
+    deleted_at: str
+    origin_node_id: int
 
 
 @dataclass(slots=True)

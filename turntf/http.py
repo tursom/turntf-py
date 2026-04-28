@@ -8,6 +8,7 @@ import httpx
 
 from .errors import ConnectionError, ProtocolError
 from .mapping import (
+    attachment_from_http,
     blacklist_entry_from_http,
     cluster_node_from_http,
     delete_user_result_from_http,
@@ -21,6 +22,8 @@ from .mapping import (
 )
 from .password import PasswordInput, plain_password
 from .types import (
+    Attachment,
+    AttachmentType,
     BlacklistEntry,
     ClusterNode,
     CreateUserRequest,
@@ -154,43 +157,30 @@ class AsyncHTTPClient:
         return delete_user_result_from_http(_expect_dict(response, "delete user response"))
 
     async def create_subscription(self, token: str, user: UserRef, channel: UserRef) -> Subscription:
-        validate_user_ref(user, "user")
-        validate_user_ref(channel, "channel")
-        response = await self._do_json(
-            "POST",
-            f"/nodes/{user.node_id}/users/{user.user_id}/subscriptions",
+        attachment = await self.upsert_attachment(
             token,
-            {"channel_node_id": channel.node_id, "channel_user_id": channel.user_id},
-            {200, 201},
+            user,
+            channel,
+            AttachmentType.CHANNEL_SUBSCRIPTION,
+            b"{}",
         )
-        return subscription_from_http(_expect_dict(response, "create subscription response"))
+        return subscription_from_http(_attachment_payload(attachment))
 
     async def subscribe_channel(self, token: str, subscriber: UserRef, channel: UserRef) -> Subscription:
         return await self.create_subscription(token, subscriber, channel)
 
     async def unsubscribe_channel(self, token: str, subscriber: UserRef, channel: UserRef) -> Subscription:
-        validate_user_ref(subscriber, "subscriber")
-        validate_user_ref(channel, "channel")
-        response = await self._do_json(
-            "DELETE",
-            f"/nodes/{subscriber.node_id}/users/{subscriber.user_id}/subscriptions/{channel.node_id}/{channel.user_id}",
+        attachment = await self.delete_attachment(
             token,
-            None,
-            {200},
+            subscriber,
+            channel,
+            AttachmentType.CHANNEL_SUBSCRIPTION,
         )
-        return subscription_from_http(_expect_dict(response, "unsubscribe channel response"))
+        return subscription_from_http(_attachment_payload(attachment))
 
     async def list_subscriptions(self, token: str, subscriber: UserRef) -> list[Subscription]:
-        validate_user_ref(subscriber, "subscriber")
-        response = await self._do_json(
-            "GET",
-            f"/nodes/{subscriber.node_id}/users/{subscriber.user_id}/subscriptions",
-            token,
-            None,
-            {200},
-        )
-        items = _items_from_payload(response, "items")
-        return [subscription_from_http(_expect_dict(item, "subscription item")) for item in items]
+        items = await self.list_attachments(token, subscriber, AttachmentType.CHANNEL_SUBSCRIPTION)
+        return [subscription_from_http(_attachment_payload(item)) for item in items]
 
     async def list_messages(self, token: str, target: UserRef, limit: int = 0) -> list[Message]:
         validate_user_ref(target, "target")
@@ -266,40 +256,88 @@ class AsyncHTTPClient:
         return [logged_in_user_from_http(_expect_dict(item, "logged-in user item")) for item in items]
 
     async def block_user(self, token: str, owner: UserRef, blocked: UserRef) -> BlacklistEntry:
-        validate_user_ref(owner, "owner")
-        validate_user_ref(blocked, "blocked")
-        response = await self._do_json(
-            "POST",
-            f"/nodes/{owner.node_id}/users/{owner.user_id}/blacklist",
+        attachment = await self.upsert_attachment(
             token,
-            {"blocked_node_id": blocked.node_id, "blocked_user_id": blocked.user_id},
-            {200, 201},
+            owner,
+            blocked,
+            AttachmentType.USER_BLACKLIST,
+            b"{}",
         )
-        return blacklist_entry_from_http(_expect_dict(response, "block user response"))
+        return blacklist_entry_from_http(_attachment_payload(attachment))
 
     async def unblock_user(self, token: str, owner: UserRef, blocked: UserRef) -> BlacklistEntry:
+        attachment = await self.delete_attachment(
+            token,
+            owner,
+            blocked,
+            AttachmentType.USER_BLACKLIST,
+        )
+        return blacklist_entry_from_http(_attachment_payload(attachment))
+
+    async def list_blocked_users(self, token: str, owner: UserRef) -> list[BlacklistEntry]:
+        items = await self.list_attachments(token, owner, AttachmentType.USER_BLACKLIST)
+        return [blacklist_entry_from_http(_attachment_payload(item)) for item in items]
+
+    async def upsert_attachment(
+        self,
+        token: str,
+        owner: UserRef,
+        subject: UserRef,
+        attachment_type: AttachmentType,
+        config_json: bytes,
+    ) -> Attachment:
         validate_user_ref(owner, "owner")
-        validate_user_ref(blocked, "blocked")
+        validate_user_ref(subject, "subject")
+        response = await self._do_json(
+            "PUT",
+            (
+                f"/nodes/{owner.node_id}/users/{owner.user_id}/attachments/"
+                f"{attachment_type.value}/{subject.node_id}/{subject.user_id}"
+            ),
+            token,
+            {"config_json": {} if len(config_json) == 0 else _json_bytes_to_value(config_json, "config_json")},
+            {200, 201},
+        )
+        return attachment_from_http(_expect_dict(response, "upsert attachment response"))
+
+    async def delete_attachment(
+        self,
+        token: str,
+        owner: UserRef,
+        subject: UserRef,
+        attachment_type: AttachmentType,
+    ) -> Attachment:
+        validate_user_ref(owner, "owner")
+        validate_user_ref(subject, "subject")
         response = await self._do_json(
             "DELETE",
-            f"/nodes/{owner.node_id}/users/{owner.user_id}/blacklist/{blocked.node_id}/{blocked.user_id}",
+            (
+                f"/nodes/{owner.node_id}/users/{owner.user_id}/attachments/"
+                f"{attachment_type.value}/{subject.node_id}/{subject.user_id}"
+            ),
             token,
             None,
             {200},
         )
-        return blacklist_entry_from_http(_expect_dict(response, "unblock user response"))
+        return attachment_from_http(_expect_dict(response, "delete attachment response"))
 
-    async def list_blocked_users(self, token: str, owner: UserRef) -> list[BlacklistEntry]:
+    async def list_attachments(
+        self,
+        token: str,
+        owner: UserRef,
+        attachment_type: AttachmentType | None = None,
+    ) -> list[Attachment]:
         validate_user_ref(owner, "owner")
+        query = f"?attachment_type={attachment_type.value}" if attachment_type is not None else ""
         response = await self._do_json(
             "GET",
-            f"/nodes/{owner.node_id}/users/{owner.user_id}/blacklist",
+            f"/nodes/{owner.node_id}/users/{owner.user_id}/attachments{query}",
             token,
             None,
             {200},
         )
         items = _items_from_payload(response, "items")
-        return [blacklist_entry_from_http(_expect_dict(item, "blocked user item")) for item in items]
+        return [attachment_from_http(_expect_dict(item, "attachment item")) for item in items]
 
     async def list_events(self, token: str, after: int = 0, limit: int = 0) -> list[Event]:
         query_parts: list[str] = []
@@ -386,3 +424,17 @@ def _items_from_payload(value: Any, *keys: str) -> list[Any]:
         if isinstance(candidate, list):
             return candidate
     raise ProtocolError("missing items in list response")
+
+
+def _attachment_payload(attachment: Attachment) -> dict[str, Any]:
+    return {
+        "owner": {"node_id": attachment.owner.node_id, "user_id": attachment.owner.user_id},
+        "subject": {"node_id": attachment.subject.node_id, "user_id": attachment.subject.user_id},
+        "attachment_type": attachment.attachment_type.value,
+        "config_json": _json_bytes_to_value(attachment.config_json, "config_json")
+        if attachment.config_json
+        else {},
+        "attached_at": attachment.attached_at,
+        "deleted_at": attachment.deleted_at,
+        "origin_node_id": attachment.origin_node_id,
+    }

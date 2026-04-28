@@ -438,12 +438,14 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             subscribe_req = await conn.server_recv()
             await conn.server_send(
                 pb.ServerEnvelope(
-                    subscribe_channel_response=pb.SubscribeChannelResponse(
-                        request_id=subscribe_req.subscribe_channel.request_id,
-                        subscription=pb.Subscription(
-                            subscriber=subscribe_req.subscribe_channel.subscriber,
-                            channel=subscribe_req.subscribe_channel.channel,
-                            subscribed_at="hlc-sub",
+                    upsert_user_attachment_response=pb.UpsertUserAttachmentResponse(
+                        request_id=subscribe_req.upsert_user_attachment.request_id,
+                        attachment=pb.Attachment(
+                            owner=subscribe_req.upsert_user_attachment.owner,
+                            subject=subscribe_req.upsert_user_attachment.subject,
+                            attachment_type=pb.ATTACHMENT_TYPE_CHANNEL_SUBSCRIPTION,
+                            config_json=b"{}",
+                            attached_at="hlc-sub",
                             origin_node_id=4096,
                         ),
                     )
@@ -453,13 +455,15 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             list_subs_req = await conn.server_recv()
             await conn.server_send(
                 pb.ServerEnvelope(
-                    list_subscriptions_response=pb.ListSubscriptionsResponse(
-                        request_id=list_subs_req.list_subscriptions.request_id,
+                    list_user_attachments_response=pb.ListUserAttachmentsResponse(
+                        request_id=list_subs_req.list_user_attachments.request_id,
                         items=[
-                            pb.Subscription(
-                                subscriber=pb.UserRef(node_id=4096, user_id=1025),
-                                channel=pb.UserRef(node_id=4096, user_id=9001),
-                                subscribed_at="hlc-sub",
+                            pb.Attachment(
+                                owner=pb.UserRef(node_id=4096, user_id=1025),
+                                subject=pb.UserRef(node_id=4096, user_id=9001),
+                                attachment_type=pb.ATTACHMENT_TYPE_CHANNEL_SUBSCRIPTION,
+                                config_json=b"{}",
+                                attached_at="hlc-sub",
                                 origin_node_id=4096,
                             )
                         ],
@@ -471,12 +475,14 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             unsubscribe_req = await conn.server_recv()
             await conn.server_send(
                 pb.ServerEnvelope(
-                    unsubscribe_channel_response=pb.UnsubscribeChannelResponse(
-                        request_id=unsubscribe_req.unsubscribe_channel.request_id,
-                        subscription=pb.Subscription(
-                            subscriber=unsubscribe_req.unsubscribe_channel.subscriber,
-                            channel=unsubscribe_req.unsubscribe_channel.channel,
-                            subscribed_at="hlc-sub",
+                    delete_user_attachment_response=pb.DeleteUserAttachmentResponse(
+                        request_id=unsubscribe_req.delete_user_attachment.request_id,
+                        attachment=pb.Attachment(
+                            owner=unsubscribe_req.delete_user_attachment.owner,
+                            subject=unsubscribe_req.delete_user_attachment.subject,
+                            attachment_type=pb.ATTACHMENT_TYPE_CHANNEL_SUBSCRIPTION,
+                            config_json=b"{}",
+                            attached_at="hlc-sub",
                             deleted_at="hlc-unsub",
                             origin_node_id=4096,
                         ),
@@ -487,12 +493,14 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             block_req = await conn.server_recv()
             await conn.server_send(
                 pb.ServerEnvelope(
-                    block_user_response=pb.BlockUserResponse(
-                        request_id=block_req.block_user.request_id,
-                        entry=pb.BlacklistEntry(
-                            owner=block_req.block_user.owner,
-                            blocked=block_req.block_user.blocked,
-                            blocked_at="hlc-blocked",
+                    upsert_user_attachment_response=pb.UpsertUserAttachmentResponse(
+                        request_id=block_req.upsert_user_attachment.request_id,
+                        attachment=pb.Attachment(
+                            owner=block_req.upsert_user_attachment.owner,
+                            subject=block_req.upsert_user_attachment.subject,
+                            attachment_type=pb.ATTACHMENT_TYPE_USER_BLACKLIST,
+                            config_json=b"{}",
+                            attached_at="hlc-blocked",
                             origin_node_id=4096,
                         ),
                     )
@@ -502,13 +510,15 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             list_blocked_req = await conn.server_recv()
             await conn.server_send(
                 pb.ServerEnvelope(
-                    list_blocked_users_response=pb.ListBlockedUsersResponse(
-                        request_id=list_blocked_req.list_blocked_users.request_id,
+                    list_user_attachments_response=pb.ListUserAttachmentsResponse(
+                        request_id=list_blocked_req.list_user_attachments.request_id,
                         items=[
-                            pb.BlacklistEntry(
+                            pb.Attachment(
                                 owner=pb.UserRef(node_id=4096, user_id=1025),
-                                blocked=pb.UserRef(node_id=4096, user_id=2027),
-                                blocked_at="hlc-blocked",
+                                subject=pb.UserRef(node_id=4096, user_id=2027),
+                                attachment_type=pb.ATTACHMENT_TYPE_USER_BLACKLIST,
+                                config_json=b"{}",
+                                attached_at="hlc-blocked",
                                 origin_node_id=4096,
                             )
                         ],
@@ -520,12 +530,14 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             unblock_req = await conn.server_recv()
             await conn.server_send(
                 pb.ServerEnvelope(
-                    unblock_user_response=pb.UnblockUserResponse(
-                        request_id=unblock_req.unblock_user.request_id,
-                        entry=pb.BlacklistEntry(
-                            owner=unblock_req.unblock_user.owner,
-                            blocked=unblock_req.unblock_user.blocked,
-                            blocked_at="hlc-blocked",
+                    delete_user_attachment_response=pb.DeleteUserAttachmentResponse(
+                        request_id=unblock_req.delete_user_attachment.request_id,
+                        attachment=pb.Attachment(
+                            owner=unblock_req.delete_user_attachment.owner,
+                            subject=unblock_req.delete_user_attachment.subject,
+                            attachment_type=pb.ATTACHMENT_TYPE_USER_BLACKLIST,
+                            config_json=b"{}",
+                            attached_at="hlc-blocked",
                             deleted_at="hlc-unblocked",
                             origin_node_id=4096,
                         ),

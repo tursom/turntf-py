@@ -12,6 +12,8 @@ from .http import AsyncHTTPClient
 from .password import PasswordInput, hash_password, hashed_password, plain_password
 from .store import CursorStore, MemoryCursorStore
 from .types import (
+    Attachment,
+    AttachmentType,
     BlacklistEntry,
     ClusterNode,
     Credentials,
@@ -40,6 +42,8 @@ from .types import (
 __all__ = [
     "AsyncClient",
     "AsyncHTTPClient",
+    "Attachment",
+    "AttachmentType",
     "BlacklistEntry",
     "ClosedError",
     "ClusterNode",

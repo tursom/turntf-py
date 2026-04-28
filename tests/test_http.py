@@ -76,26 +76,30 @@ def test_http_client_requests_and_encoding() -> None:
             if path == "/nodes/4096/users/1025" and method == "DELETE":
                 return httpx.Response(200, json={"status": "deleted", "node_id": 4096, "user_id": 1025})
 
-            if path == "/nodes/4096/users/1025/subscriptions" and method == "POST":
+            if path == "/nodes/4096/users/1025/attachments/channel_subscription/4096/2025" and method == "PUT":
                 return httpx.Response(
                     201,
                     json={
-                        "subscriber": {"node_id": 4096, "user_id": 1025},
-                        "channel": {"node_id": 4096, "user_id": 2025},
-                        "subscribed_at": "hlc-sub",
+                        "owner": {"node_id": 4096, "user_id": 1025},
+                        "subject": {"node_id": 4096, "user_id": 2025},
+                        "attachment_type": "channel_subscription",
+                        "config_json": {},
+                        "attached_at": "hlc-sub",
                         "origin_node_id": 4096,
                     },
                 )
 
-            if path == "/nodes/4096/users/1025/subscriptions" and method == "GET":
+            if path == "/nodes/4096/users/1025/attachments" and method == "GET" and request.url.params.get("attachment_type") == "channel_subscription":
                 return httpx.Response(
                     200,
                     json={
                         "items": [
                             {
-                                "subscriber": {"node_id": 4096, "user_id": 1025},
-                                "channel": {"node_id": 4096, "user_id": 2025},
-                                "subscribed_at": "hlc-sub",
+                                "owner": {"node_id": 4096, "user_id": 1025},
+                                "subject": {"node_id": 4096, "user_id": 2025},
+                                "attachment_type": "channel_subscription",
+                                "config_json": {},
+                                "attached_at": "hlc-sub",
                                 "origin_node_id": 4096,
                             }
                         ],
@@ -103,13 +107,15 @@ def test_http_client_requests_and_encoding() -> None:
                     },
                 )
 
-            if path == "/nodes/4096/users/1025/subscriptions/4096/2025" and method == "DELETE":
+            if path == "/nodes/4096/users/1025/attachments/channel_subscription/4096/2025" and method == "DELETE":
                 return httpx.Response(
                     200,
                     json={
-                        "subscriber": {"node_id": 4096, "user_id": 1025},
-                        "channel": {"node_id": 4096, "user_id": 2025},
-                        "subscribed_at": "hlc-sub",
+                        "owner": {"node_id": 4096, "user_id": 1025},
+                        "subject": {"node_id": 4096, "user_id": 2025},
+                        "attachment_type": "channel_subscription",
+                        "config_json": {},
+                        "attached_at": "hlc-sub",
                         "deleted_at": "hlc-unsub",
                         "origin_node_id": 4096,
                     },
@@ -187,26 +193,30 @@ def test_http_client_requests_and_encoding() -> None:
                     ],
                 )
 
-            if path == "/nodes/4096/users/1025/blacklist" and method == "POST":
+            if path == "/nodes/4096/users/1025/attachments/user_blacklist/4096/1027" and method == "PUT":
                 return httpx.Response(
                     201,
                     json={
                         "owner": {"node_id": 4096, "user_id": 1025},
-                        "blocked": {"node_id": 4096, "user_id": 1027},
-                        "blocked_at": "hlc-blocked",
+                        "subject": {"node_id": 4096, "user_id": 1027},
+                        "attachment_type": "user_blacklist",
+                        "config_json": {},
+                        "attached_at": "hlc-blocked",
                         "origin_node_id": 4096,
                     },
                 )
 
-            if path == "/nodes/4096/users/1025/blacklist" and method == "GET":
+            if path == "/nodes/4096/users/1025/attachments" and method == "GET" and request.url.params.get("attachment_type") == "user_blacklist":
                 return httpx.Response(
                     200,
                     json={
                         "items": [
                             {
                                 "owner": {"node_id": 4096, "user_id": 1025},
-                                "blocked": {"node_id": 4096, "user_id": 1027},
-                                "blocked_at": "hlc-blocked",
+                                "subject": {"node_id": 4096, "user_id": 1027},
+                                "attachment_type": "user_blacklist",
+                                "config_json": {},
+                                "attached_at": "hlc-blocked",
                                 "origin_node_id": 4096,
                             }
                         ],
@@ -214,13 +224,15 @@ def test_http_client_requests_and_encoding() -> None:
                     },
                 )
 
-            if path == "/nodes/4096/users/1025/blacklist/4096/1027" and method == "DELETE":
+            if path == "/nodes/4096/users/1025/attachments/user_blacklist/4096/1027" and method == "DELETE":
                 return httpx.Response(
                     200,
                     json={
                         "owner": {"node_id": 4096, "user_id": 1025},
-                        "blocked": {"node_id": 4096, "user_id": 1027},
-                        "blocked_at": "hlc-blocked",
+                        "subject": {"node_id": 4096, "user_id": 1027},
+                        "attachment_type": "user_blacklist",
+                        "config_json": {},
+                        "attached_at": "hlc-blocked",
                         "deleted_at": "hlc-unblocked",
                         "origin_node_id": 4096,
                     },

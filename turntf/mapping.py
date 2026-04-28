@@ -7,6 +7,8 @@ from typing import Any
 from ._generated import client_pb2 as pb
 from .errors import ProtocolError
 from .types import (
+    Attachment,
+    AttachmentType,
     BlacklistEntry,
     ClusterNode,
     DeliveryMode,
@@ -43,6 +45,30 @@ def delivery_mode_from_proto(mode: int) -> DeliveryMode:
     if mode == pb.CLIENT_DELIVERY_MODE_ROUTE_RETRY:
         return DeliveryMode.ROUTE_RETRY
     return DeliveryMode.UNSPECIFIED
+
+
+def attachment_type_to_proto(attachment_type: AttachmentType) -> int:
+    if attachment_type == AttachmentType.CHANNEL_MANAGER:
+        return pb.ATTACHMENT_TYPE_CHANNEL_MANAGER
+    if attachment_type == AttachmentType.CHANNEL_WRITER:
+        return pb.ATTACHMENT_TYPE_CHANNEL_WRITER
+    if attachment_type == AttachmentType.CHANNEL_SUBSCRIPTION:
+        return pb.ATTACHMENT_TYPE_CHANNEL_SUBSCRIPTION
+    if attachment_type == AttachmentType.USER_BLACKLIST:
+        return pb.ATTACHMENT_TYPE_USER_BLACKLIST
+    return pb.ATTACHMENT_TYPE_UNSPECIFIED
+
+
+def attachment_type_from_proto(attachment_type: int) -> AttachmentType:
+    if attachment_type == pb.ATTACHMENT_TYPE_CHANNEL_MANAGER:
+        return AttachmentType.CHANNEL_MANAGER
+    if attachment_type == pb.ATTACHMENT_TYPE_CHANNEL_WRITER:
+        return AttachmentType.CHANNEL_WRITER
+    if attachment_type == pb.ATTACHMENT_TYPE_CHANNEL_SUBSCRIPTION:
+        return AttachmentType.CHANNEL_SUBSCRIPTION
+    if attachment_type == pb.ATTACHMENT_TYPE_USER_BLACKLIST:
+        return AttachmentType.USER_BLACKLIST
+    raise ProtocolError(f"unsupported attachment type {attachment_type}")
 
 
 def user_ref_to_proto(ref: UserRef) -> pb.UserRef:
@@ -120,28 +146,46 @@ def relay_accepted_from_proto(accepted: pb.TransientAccepted | None) -> RelayAcc
     )
 
 
-def subscription_from_proto(subscription: pb.Subscription | None) -> Subscription:
-    if subscription is None:
-        raise ProtocolError("missing subscription")
+def attachment_from_proto(attachment: pb.Attachment | None) -> Attachment:
+    if attachment is None:
+        raise ProtocolError("missing attachment")
+    return Attachment(
+        owner=user_ref_from_proto(attachment.owner),
+        subject=user_ref_from_proto(attachment.subject),
+        attachment_type=attachment_type_from_proto(attachment.attachment_type),
+        config_json=bytes(attachment.config_json),
+        attached_at=attachment.attached_at,
+        deleted_at=attachment.deleted_at,
+        origin_node_id=attachment.origin_node_id,
+    )
+
+
+def subscription_from_attachment(attachment: Attachment) -> Subscription:
     return Subscription(
-        subscriber=user_ref_from_proto(subscription.subscriber),
-        channel=user_ref_from_proto(subscription.channel),
-        subscribed_at=subscription.subscribed_at,
-        deleted_at=subscription.deleted_at,
-        origin_node_id=subscription.origin_node_id,
+        subscriber=attachment.owner,
+        channel=attachment.subject,
+        subscribed_at=attachment.attached_at,
+        deleted_at=attachment.deleted_at,
+        origin_node_id=attachment.origin_node_id,
     )
 
 
-def blacklist_entry_from_proto(entry: pb.BlacklistEntry | None) -> BlacklistEntry:
-    if entry is None:
-        raise ProtocolError("missing blacklist entry")
+def blacklist_entry_from_attachment(attachment: Attachment) -> BlacklistEntry:
     return BlacklistEntry(
-        owner=user_ref_from_proto(entry.owner),
-        blocked=user_ref_from_proto(entry.blocked),
-        blocked_at=entry.blocked_at,
-        deleted_at=entry.deleted_at,
-        origin_node_id=entry.origin_node_id,
+        owner=attachment.owner,
+        blocked=attachment.subject,
+        blocked_at=attachment.attached_at,
+        deleted_at=attachment.deleted_at,
+        origin_node_id=attachment.origin_node_id,
     )
+
+
+def subscription_from_proto(subscription: pb.Attachment | None) -> Subscription:
+    return subscription_from_attachment(attachment_from_proto(subscription))
+
+
+def blacklist_entry_from_proto(entry: pb.Attachment | None) -> BlacklistEntry:
+    return blacklist_entry_from_attachment(attachment_from_proto(entry))
 
 
 def event_from_proto(event: pb.Event | None) -> Event:
@@ -279,11 +323,15 @@ def messages_from_proto(items: list[pb.Message]) -> list[Message]:
     return [message_from_proto(item) for item in items]
 
 
-def subscriptions_from_proto(items: list[pb.Subscription]) -> list[Subscription]:
+def attachments_from_proto(items: list[pb.Attachment]) -> list[Attachment]:
+    return [attachment_from_proto(item) for item in items]
+
+
+def subscriptions_from_proto(items: list[pb.Attachment]) -> list[Subscription]:
     return [subscription_from_proto(item) for item in items]
 
 
-def blacklist_entries_from_proto(items: list[pb.BlacklistEntry]) -> list[BlacklistEntry]:
+def blacklist_entries_from_proto(items: list[pb.Attachment]) -> list[BlacklistEntry]:
     return [blacklist_entry_from_proto(item) for item in items]
 
 
@@ -346,24 +394,25 @@ def relay_accepted_from_http(data: dict[str, Any]) -> RelayAccepted:
     )
 
 
-def subscription_from_http(data: dict[str, Any]) -> Subscription:
-    return Subscription(
-        subscriber=user_ref_from_http(data.get("subscriber")),
-        channel=user_ref_from_http(data.get("channel")),
-        subscribed_at=_str_value(data.get("subscribed_at")),
+def attachment_from_http(data: dict[str, Any]) -> Attachment:
+    attachment_type = _str_value(data.get("attachment_type"))
+    return Attachment(
+        owner=user_ref_from_http(data.get("owner")),
+        subject=user_ref_from_http(data.get("subject")),
+        attachment_type=AttachmentType(attachment_type),
+        config_json=_json_value_to_bytes(data.get("config_json") if "config_json" in data else {}),
+        attached_at=_str_value(data.get("attached_at")),
         deleted_at=_str_value(data.get("deleted_at")),
         origin_node_id=_int_value(data.get("origin_node_id")),
     )
+
+
+def subscription_from_http(data: dict[str, Any]) -> Subscription:
+    return subscription_from_attachment(attachment_from_http(data))
 
 
 def blacklist_entry_from_http(data: dict[str, Any]) -> BlacklistEntry:
-    return BlacklistEntry(
-        owner=user_ref_from_http(data.get("owner")),
-        blocked=user_ref_from_http(data.get("blocked")),
-        blocked_at=_str_value(data.get("blocked_at")),
-        deleted_at=_str_value(data.get("deleted_at")),
-        origin_node_id=_int_value(data.get("origin_node_id")),
-    )
+    return blacklist_entry_from_attachment(attachment_from_http(data))
 
 
 def event_from_http(data: dict[str, Any]) -> Event:
