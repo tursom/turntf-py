@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .types import DeliveryMode, Message, MessageCursor, UserRef
+from .types import DeliveryMode, Message, MessageCursor, SessionRef, UserRef
 
 
 def validate_positive_int(value: int, field: str) -> None:
@@ -18,6 +18,12 @@ def validate_user_ref(ref: UserRef, field: str = "user") -> None:
 def validate_delivery_mode(mode: DeliveryMode) -> None:
     if mode not in {DeliveryMode.BEST_EFFORT, DeliveryMode.ROUTE_RETRY}:
         raise ValueError(f"invalid delivery_mode {mode!r}")
+
+
+def validate_session_ref(ref: SessionRef, field: str = "session_ref") -> None:
+    validate_positive_int(ref.serving_node_id, f"{field}.serving_node_id")
+    if ref.session_id.strip() == "":
+        raise ValueError(f"{field}.session_id is required")
 
 
 def cursor_for_message(message: Message) -> MessageCursor:

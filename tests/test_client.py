@@ -15,6 +15,7 @@ from turntf import (
     MessageCursor,
     NopHandler,
     Packet,
+    SessionRef,
     UpdateUserRequest,
     UserRef,
     plain_password,
@@ -24,6 +25,10 @@ from turntf.client import websocket_url
 from turntf.errors import ConnectionError as TurntfConnectionError
 from turntf.errors import ServerError
 from turntf.store import MemoryCursorStore
+
+
+def pb_session_ref(session_id: str, serving_node_id: int = 4096) -> pb.SessionRef:
+    return pb.SessionRef(serving_node_id=serving_node_id, session_id=session_id)
 
 
 class FakeConnection:
@@ -108,20 +113,20 @@ class RecordingStore:
 
 class RecordingHandler(NopHandler):
     def __init__(self) -> None:
-        self.logins: list[tuple[int, str]] = []
+        self.logins: list[tuple[int, str, str]] = []
         self.messages: list[Message] = []
-        self.packets: list[int] = []
+        self.packets: list[Packet] = []
         self.errors: list[str] = []
         self.disconnects: list[str] = []
 
     async def on_login(self, info) -> None:  # type: ignore[override]
-        self.logins.append((info.user.user_id, info.protocol_version))
+        self.logins.append((info.user.user_id, info.protocol_version, info.session_ref.session_id))
 
     async def on_message(self, message: Message) -> None:
         self.messages.append(message)
 
     async def on_packet(self, packet: Packet) -> None:
-        self.packets.append(packet.packet_id)
+        self.packets.append(packet)
 
     async def on_error(self, error: BaseException) -> None:
         self.errors.append(str(error))
@@ -151,6 +156,7 @@ def test_client_login_message_ack_send_and_ping() -> None:
                     login_response=pb.LoginResponse(
                         user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
                         protocol_version="client-v1alpha1",
+                        session_ref=pb_session_ref("sess-alice"),
                     )
                 )
             )
@@ -212,6 +218,7 @@ def test_client_login_message_ack_send_and_ping() -> None:
         )
         try:
             await client.connect()
+            assert client.session_ref == SessionRef(serving_node_id=4096, session_id="sess-alice")
             message = await client.send_message(UserRef(node_id=4096, user_id=1025), b"payload")
             assert message.seq == 8
             await client.ping()
@@ -220,7 +227,7 @@ def test_client_login_message_ack_send_and_ping() -> None:
             await client.close()
 
         assert acked == [(4096, 7)]
-        assert handler.logins == [(1025, "client-v1alpha1")]
+        assert handler.logins == [(1025, "client-v1alpha1", "sess-alice")]
         assert len(handler.messages) == 1
         assert store.saved == ["message", "cursor", "message", "cursor"]
 
@@ -242,6 +249,7 @@ def test_client_transient_only_and_realtime_path() -> None:
                     login_response=pb.LoginResponse(
                         user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
                         protocol_version="client-v1alpha1",
+                        session_ref=pb_session_ref("sess-transient"),
                     )
                 )
             )
@@ -270,6 +278,143 @@ def test_client_transient_only_and_realtime_path() -> None:
 
         assert observed["transient_only"] is True
         assert observed["path"] == "wss://turntf.test/base/ws/realtime"
+
+    asyncio.run(main())
+
+
+def test_client_resolve_user_sessions_and_session_targeted_packets() -> None:
+    async def main() -> None:
+        dialer = FakeDialer()
+        handler = RecordingHandler()
+
+        async def server_logic() -> None:
+            conn = await dialer.connections.get()
+            await conn.server_recv()
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    login_response=pb.LoginResponse(
+                        user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
+                        protocol_version="client-v1alpha2",
+                        session_ref=pb_session_ref("sess-self"),
+                    )
+                )
+            )
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    packet_pushed=pb.PacketPushed(
+                        packet=pb.Packet(
+                            packet_id=91,
+                            source_node_id=8192,
+                            target_node_id=12288,
+                            recipient=pb.UserRef(node_id=8192, user_id=2048),
+                            sender=pb.UserRef(node_id=4096, user_id=1025),
+                            body=b"packet-body",
+                            delivery_mode=pb.CLIENT_DELIVERY_MODE_ROUTE_RETRY,
+                            target_session=pb_session_ref("sess-targeted", serving_node_id=12288),
+                        )
+                    )
+                )
+            )
+
+            resolve_req = await conn.server_recv()
+            assert resolve_req.resolve_user_sessions.user.node_id == 8192
+            assert resolve_req.resolve_user_sessions.user.user_id == 2048
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    resolve_user_sessions_response=pb.ResolveUserSessionsResponse(
+                        request_id=resolve_req.resolve_user_sessions.request_id,
+                        user=resolve_req.resolve_user_sessions.user,
+                        presence=[
+                            pb.OnlineNodePresence(
+                                serving_node_id=12288,
+                                session_count=2,
+                                transport_hint="ws",
+                            )
+                        ],
+                        items=[
+                            pb.ResolvedSession(
+                                session=pb_session_ref("sess-a", serving_node_id=12288),
+                                transport="ws",
+                                transient_capable=True,
+                            ),
+                            pb.ResolvedSession(
+                                session=pb_session_ref("sess-b", serving_node_id=12288),
+                                transport="ws",
+                                transient_capable=False,
+                            ),
+                        ],
+                        count=2,
+                    )
+                )
+            )
+
+            packet_req = await conn.server_recv()
+            assert packet_req.send_message.delivery_kind == pb.CLIENT_DELIVERY_KIND_TRANSIENT
+            assert packet_req.send_message.delivery_mode == pb.CLIENT_DELIVERY_MODE_ROUTE_RETRY
+            assert packet_req.send_message.target_session.serving_node_id == 12288
+            assert packet_req.send_message.target_session.session_id == "sess-b"
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    send_message_response=pb.SendMessageResponse(
+                        request_id=packet_req.send_message.request_id,
+                        transient_accepted=pb.TransientAccepted(
+                            packet_id=77,
+                            source_node_id=4096,
+                            target_node_id=12288,
+                            recipient=packet_req.send_message.target,
+                            delivery_mode=pb.CLIENT_DELIVERY_MODE_ROUTE_RETRY,
+                            target_session=packet_req.send_message.target_session,
+                        ),
+                    )
+                )
+            )
+
+        server_task = asyncio.create_task(server_logic())
+        client = FakeAsyncClient(
+            Config(
+                base_url="http://turntf.test",
+                credentials=Credentials(
+                    node_id=4096,
+                    user_id=1025,
+                    password=plain_password("alice-password"),
+                ),
+                handler=handler,
+                request_timeout=1.0,
+                ping_interval=3600.0,
+            ),
+            dialer,
+        )
+        try:
+            await client.connect()
+            assert client.login_info is not None
+            assert client.login_info.session_ref == SessionRef(serving_node_id=4096, session_id="sess-self")
+
+            resolved = await client.resolve_user_sessions(UserRef(node_id=8192, user_id=2048))
+            assert resolved.user == UserRef(node_id=8192, user_id=2048)
+            assert resolved.count == 2
+            assert resolved.presence[0].serving_node_id == 12288
+            assert resolved.presence[0].session_count == 2
+            assert resolved.sessions[0].transient_capable is True
+            assert resolved.sessions[1].session == SessionRef(serving_node_id=12288, session_id="sess-b")
+
+            accepted = await client.send_packet(
+                UserRef(node_id=8192, user_id=2048),
+                b"\x10\x20",
+                DeliveryMode.ROUTE_RETRY,
+                target_session=resolved.sessions[1].session,
+            )
+            assert accepted.packet_id == 77
+            assert accepted.target_session == SessionRef(serving_node_id=12288, session_id="sess-b")
+
+            await server_task
+        finally:
+            await client.close()
+
+        assert len(handler.packets) == 1
+        assert handler.packets[0].target_session == SessionRef(
+            serving_node_id=12288,
+            session_id="sess-targeted",
+        )
 
     asyncio.run(main())
 
@@ -335,6 +480,7 @@ def test_client_reconnect_uses_seen_messages() -> None:
                     login_response=pb.LoginResponse(
                         user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
                         protocol_version="client-v1alpha1",
+                        session_ref=pb_session_ref("sess-reconnect-1"),
                     )
                 )
             )
@@ -364,6 +510,7 @@ def test_client_reconnect_uses_seen_messages() -> None:
                     login_response=pb.LoginResponse(
                         user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
                         protocol_version="client-v1alpha1",
+                        session_ref=pb_session_ref("sess-reconnect-2"),
                     )
                 )
             )
@@ -409,6 +556,7 @@ def test_client_management_rpcs_and_password_hashing() -> None:
                     login_response=pb.LoginResponse(
                         user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
                         protocol_version="client-v1alpha2",
+                        session_ref=pb_session_ref("sess-admin"),
                     )
                 )
             )

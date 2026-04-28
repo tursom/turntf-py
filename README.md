@@ -21,8 +21,9 @@ pip install turntf
 - `seen_messages` 重放去重
 - `MessagePushed` 自动执行 `保存消息 -> 保存游标 -> ack`
 - `SendMessage`
-- `SendPacket`
+- `SendPacket`，支持按 `target_session` 定向投递
 - `Ping`
+- `ResolveUserSessions`
 - WS 用户、订阅、黑名单、消息、事件、集群和运维 RPC
 
 ## 快速开始
@@ -63,6 +64,7 @@ from turntf import (
     AsyncClient,
     Config,
     Credentials,
+    DeliveryMode,
     MemoryCursorStore,
     UserRef,
     plain_password,
@@ -85,6 +87,17 @@ async def main() -> None:
     token = await client.login(4096, 1, "root")
     await client.connect()
     await client.send_message(UserRef(node_id=4096, user_id=1025), b"hello")
+
+    sessions = await client.resolve_user_sessions(UserRef(node_id=4096, user_id=1025))
+    if sessions.sessions:
+        await client.send_packet(
+            UserRef(node_id=4096, user_id=1025),
+            b"ping",
+            DeliveryMode.ROUTE_RETRY,
+            target_session=sessions.sessions[0].session,
+        )
+
+    print(client.session_ref)
     await client.close()
 
 

@@ -7,7 +7,7 @@ import json
 import bcrypt
 import httpx
 
-from turntf import AsyncHTTPClient, CreateUserRequest, DeliveryMode, UpdateUserRequest, UserRef, plain_password
+from turntf import AsyncHTTPClient, CreateUserRequest, DeliveryMode, SessionRef, UpdateUserRequest, UserRef, plain_password
 
 
 def test_http_client_requests_and_encoding() -> None:
@@ -167,6 +167,10 @@ def test_http_client_requests_and_encoding() -> None:
                         "target_node_id": 8192,
                         "recipient": {"node_id": 8192, "user_id": 1025},
                         "delivery_mode": "route_retry",
+                        "target_session": {
+                            "serving_node_id": 8192,
+                            "session_id": "sess-http-target",
+                        },
                     },
                 )
 
@@ -372,6 +376,7 @@ def test_http_client_requests_and_encoding() -> None:
             DeliveryMode.ROUTE_RETRY,
         )
         assert packet.packet_id == 77
+        assert packet.target_session == SessionRef(serving_node_id=8192, session_id="sess-http-target")
 
         nodes = await client.list_cluster_nodes(token)
         assert len(nodes) == 2

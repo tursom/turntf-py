@@ -33,6 +33,12 @@ class UserRef:
 
 
 @dataclass(slots=True, frozen=True)
+class SessionRef:
+    serving_node_id: int
+    session_id: str
+
+
+@dataclass(slots=True, frozen=True)
 class MessageCursor:
     node_id: int
     seq: int
@@ -73,6 +79,7 @@ class Packet:
     sender: UserRef
     body: bytes
     delivery_mode: DeliveryMode
+    target_session: SessionRef | None = None
 
 
 @dataclass(slots=True)
@@ -82,6 +89,7 @@ class RelayAccepted:
     target_node_id: int
     recipient: UserRef
     delivery_mode: DeliveryMode
+    target_session: SessionRef | None = None
 
 
 @dataclass(slots=True)
@@ -139,6 +147,31 @@ class LoggedInUser:
     node_id: int
     user_id: int
     username: str
+
+
+@dataclass(slots=True)
+class OnlineNodePresence:
+    serving_node_id: int
+    session_count: int
+    transport_hint: str
+
+
+@dataclass(slots=True)
+class ResolvedSession:
+    session: SessionRef
+    transport: str
+    transient_capable: bool
+
+
+@dataclass(slots=True)
+class ResolvedUserSessions:
+    user: UserRef
+    presence: list[OnlineNodePresence] = field(default_factory=list)
+    sessions: list[ResolvedSession] = field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return len(self.sessions)
 
 
 @dataclass(slots=True)
@@ -219,6 +252,7 @@ class DeleteUserResult:
 class LoginInfo:
     user: User
     protocol_version: str
+    session_ref: SessionRef
 
 
 @dataclass(slots=True)

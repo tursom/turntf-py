@@ -19,12 +19,16 @@ from .types import (
     Message,
     MessageCursor,
     MessageTrimStatus,
+    OnlineNodePresence,
     OperationsStatus,
     Packet,
     PeerOriginStatus,
     PeerStatus,
     ProjectionStatus,
     RelayAccepted,
+    ResolvedSession,
+    ResolvedUserSessions,
+    SessionRef,
     Subscription,
     User,
     UserRef,
@@ -75,6 +79,10 @@ def user_ref_to_proto(ref: UserRef) -> pb.UserRef:
     return pb.UserRef(node_id=ref.node_id, user_id=ref.user_id)
 
 
+def session_ref_to_proto(ref: SessionRef) -> pb.SessionRef:
+    return pb.SessionRef(serving_node_id=ref.serving_node_id, session_id=ref.session_id)
+
+
 def cursor_to_proto(cursor: MessageCursor) -> pb.MessageCursor:
     return pb.MessageCursor(node_id=cursor.node_id, seq=cursor.seq)
 
@@ -89,6 +97,14 @@ def user_ref_from_proto(ref: pb.UserRef | None) -> UserRef:
     if ref is None:
         return UserRef(node_id=0, user_id=0)
     return UserRef(node_id=ref.node_id, user_id=ref.user_id)
+
+
+def session_ref_from_proto(ref: pb.SessionRef | None) -> SessionRef:
+    if ref is None:
+        raise ProtocolError("missing session_ref")
+    if ref.serving_node_id <= 0 or ref.session_id.strip() == "":
+        raise ProtocolError("invalid session_ref")
+    return SessionRef(serving_node_id=ref.serving_node_id, session_id=ref.session_id)
 
 
 def user_from_proto(user: pb.User | None) -> User:
@@ -131,6 +147,9 @@ def packet_from_proto(packet: pb.Packet | None) -> Packet:
         sender=user_ref_from_proto(packet.sender),
         body=bytes(packet.body),
         delivery_mode=delivery_mode_from_proto(packet.delivery_mode),
+        target_session=session_ref_from_proto(packet.target_session)
+        if packet.HasField("target_session")
+        else None,
     )
 
 
@@ -143,6 +162,9 @@ def relay_accepted_from_proto(accepted: pb.TransientAccepted | None) -> RelayAcc
         target_node_id=accepted.target_node_id,
         recipient=user_ref_from_proto(accepted.recipient),
         delivery_mode=delivery_mode_from_proto(accepted.delivery_mode),
+        target_session=session_ref_from_proto(accepted.target_session)
+        if accepted.HasField("target_session")
+        else None,
     )
 
 
@@ -219,6 +241,40 @@ def logged_in_user_from_proto(user: pb.LoggedInUser | None) -> LoggedInUser:
     if user is None:
         raise ProtocolError("missing logged-in user")
     return LoggedInUser(node_id=user.node_id, user_id=user.user_id, username=user.username)
+
+
+def online_node_presence_from_proto(presence: pb.OnlineNodePresence | None) -> OnlineNodePresence:
+    if presence is None:
+        raise ProtocolError("missing online node presence")
+    return OnlineNodePresence(
+        serving_node_id=presence.serving_node_id,
+        session_count=presence.session_count,
+        transport_hint=presence.transport_hint,
+    )
+
+
+def resolved_session_from_proto(session: pb.ResolvedSession | None) -> ResolvedSession:
+    if session is None:
+        raise ProtocolError("missing resolved session")
+    if not session.HasField("session"):
+        raise ProtocolError("missing resolved session_ref")
+    return ResolvedSession(
+        session=session_ref_from_proto(session.session),
+        transport=session.transport,
+        transient_capable=session.transient_capable,
+    )
+
+
+def resolved_user_sessions_from_proto(
+    response: pb.ResolveUserSessionsResponse | None,
+) -> ResolvedUserSessions:
+    if response is None:
+        raise ProtocolError("missing resolve_user_sessions_response")
+    return ResolvedUserSessions(
+        user=user_ref_from_proto(response.user),
+        presence=[online_node_presence_from_proto(item) for item in response.presence],
+        sessions=[resolved_session_from_proto(item) for item in response.items],
+    )
 
 
 def operations_status_from_proto(status: pb.OperationsStatus | None) -> OperationsStatus:
@@ -347,10 +403,28 @@ def logged_in_users_from_proto(items: list[pb.LoggedInUser]) -> list[LoggedInUse
     return [logged_in_user_from_proto(item) for item in items]
 
 
+def online_presence_from_proto(items: list[pb.OnlineNodePresence]) -> list[OnlineNodePresence]:
+    return [online_node_presence_from_proto(item) for item in items]
+
+
+def resolved_sessions_from_proto(items: list[pb.ResolvedSession]) -> list[ResolvedSession]:
+    return [resolved_session_from_proto(item) for item in items]
+
+
 def user_ref_from_http(data: dict[str, Any] | None) -> UserRef:
     if not isinstance(data, dict):
         return UserRef(node_id=0, user_id=0)
     return UserRef(node_id=_int_value(data.get("node_id")), user_id=_int_value(data.get("user_id") or data.get("id")))
+
+
+def session_ref_from_http(data: dict[str, Any] | None) -> SessionRef | None:
+    if not isinstance(data, dict):
+        return None
+    serving_node_id = _int_value(data.get("serving_node_id"))
+    session_id = _str_value(data.get("session_id"))
+    if serving_node_id <= 0 or session_id == "":
+        return None
+    return SessionRef(serving_node_id=serving_node_id, session_id=session_id)
 
 
 def user_from_http(data: dict[str, Any]) -> User:
@@ -391,6 +465,7 @@ def relay_accepted_from_http(data: dict[str, Any]) -> RelayAccepted:
         target_node_id=_int_value(data.get("target_node_id")),
         recipient=user_ref_from_http(data.get("recipient")),
         delivery_mode=DeliveryMode(_str_value(data.get("delivery_mode")) or DeliveryMode.UNSPECIFIED.value),
+        target_session=session_ref_from_http(data.get("target_session")),
     )
 
 

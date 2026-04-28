@@ -36,6 +36,9 @@ from .mapping import (
     operations_status_from_proto,
     packet_from_proto,
     relay_accepted_from_proto,
+    resolved_user_sessions_from_proto,
+    session_ref_from_proto,
+    session_ref_to_proto,
     subscription_from_proto,
     subscriptions_from_proto,
     user_from_proto,
@@ -59,12 +62,14 @@ from .types import (
     OperationsStatus,
     Packet,
     RelayAccepted,
+    ResolvedUserSessions,
+    SessionRef,
     Subscription,
     UpdateUserRequest,
     User,
     UserRef,
 )
-from .validation import validate_delivery_mode, validate_positive_int, validate_user_ref
+from .validation import validate_delivery_mode, validate_positive_int, validate_session_ref, validate_user_ref
 
 
 class Handler:
@@ -140,11 +145,22 @@ class AsyncClient:
         self._first_connect: asyncio.Future[None] | None = None
         self._closed = False
         self._connected = False
+        self._login_info: LoginInfo | None = None
         self._stop_reconnect = False
 
     @property
     def http(self) -> AsyncHTTPClient:
         return self._http
+
+    @property
+    def login_info(self) -> LoginInfo | None:
+        return self._login_info
+
+    @property
+    def session_ref(self) -> SessionRef | None:
+        if self._login_info is None:
+            return None
+        return self._login_info.session_ref
 
     async def __aenter__(self) -> "AsyncClient":
         return self
@@ -181,6 +197,7 @@ class AsyncClient:
         ws = self._ws
         self._ws = None
         self._connected = False
+        self._login_info = None
         if ws is not None:
             await self._safe_close_ws(ws)
         if self._run_task is not None:
@@ -212,29 +229,52 @@ class AsyncClient:
     async def post_message(self, target: UserRef, body: bytes) -> Message:
         return await self.send_message(target, body)
 
-    async def send_packet(self, target: UserRef, body: bytes, delivery_mode: DeliveryMode) -> RelayAccepted:
+    async def send_packet(
+        self,
+        target: UserRef,
+        body: bytes,
+        delivery_mode: DeliveryMode,
+        *,
+        target_session: SessionRef | None = None,
+    ) -> RelayAccepted:
         validate_user_ref(target, "target")
         if len(body) == 0:
             raise ValueError("body is required")
         validate_delivery_mode(delivery_mode)
-        result = await self._rpc(
-            lambda request_id: pb.ClientEnvelope(
-                send_message=pb.SendMessageRequest(
-                    request_id=request_id,
-                    target=user_ref_to_proto(target),
-                    body=body,
-                    delivery_kind=pb.CLIENT_DELIVERY_KIND_TRANSIENT,
-                    delivery_mode=delivery_mode_to_proto(delivery_mode),
-                    sync_mode=pb.CLIENT_MESSAGE_SYNC_MODE_UNSPECIFIED,
-                )
+
+        def build(request_id: int) -> pb.ClientEnvelope:
+            request = pb.SendMessageRequest(
+                request_id=request_id,
+                target=user_ref_to_proto(target),
+                body=body,
+                delivery_kind=pb.CLIENT_DELIVERY_KIND_TRANSIENT,
+                delivery_mode=delivery_mode_to_proto(delivery_mode),
+                sync_mode=pb.CLIENT_MESSAGE_SYNC_MODE_UNSPECIFIED,
             )
-        )
+            if target_session is not None:
+                validate_session_ref(target_session, "target_session")
+                request.target_session.CopyFrom(session_ref_to_proto(target_session))
+            return pb.ClientEnvelope(send_message=request)
+
+        result = await self._rpc(build)
         if not isinstance(result, RelayAccepted):
             raise ProtocolError("missing transient_accepted in send response")
         return result
 
-    async def post_packet(self, target: UserRef, body: bytes, delivery_mode: DeliveryMode) -> RelayAccepted:
-        return await self.send_packet(target, body, delivery_mode)
+    async def post_packet(
+        self,
+        target: UserRef,
+        body: bytes,
+        delivery_mode: DeliveryMode,
+        *,
+        target_session: SessionRef | None = None,
+    ) -> RelayAccepted:
+        return await self.send_packet(
+            target,
+            body,
+            delivery_mode,
+            target_session=target_session,
+        )
 
     async def create_user(self, request: CreateUserRequest) -> User:
         if request.username == "":
@@ -512,6 +552,20 @@ class AsyncClient:
             raise ProtocolError("missing items in list_node_logged_in_users_response")
         return result
 
+    async def resolve_user_sessions(self, user: UserRef) -> ResolvedUserSessions:
+        validate_user_ref(user, "user")
+        result = await self._rpc(
+            lambda request_id: pb.ClientEnvelope(
+                resolve_user_sessions=pb.ResolveUserSessionsRequest(
+                    request_id=request_id,
+                    user=user_ref_to_proto(user),
+                )
+            )
+        )
+        if not isinstance(result, ResolvedUserSessions):
+            raise ProtocolError("missing sessions in resolve_user_sessions_response")
+        return result
+
     async def operations_status(self) -> OperationsStatus:
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
@@ -581,6 +635,7 @@ class AsyncClient:
             ping_task = asyncio.create_task(self._ping_loop())
             read_err = await self._read_loop(ws)
             self._connected = False
+            self._login_info = None
             if self._ws is ws:
                 self._ws = None
             self._fail_all_pending(DisconnectedError())
@@ -611,7 +666,15 @@ class AsyncClient:
         body = env.WhichOneof("body")
         if body == "login_response":
             response = env.login_response
-            return LoginInfo(user=user_from_proto(response.user), protocol_version=response.protocol_version)
+            if not response.HasField("session_ref"):
+                raise ProtocolError("missing session_ref in login_response")
+            info = LoginInfo(
+                user=user_from_proto(response.user),
+                protocol_version=response.protocol_version,
+                session_ref=session_ref_from_proto(response.session_ref),
+            )
+            self._login_info = info
+            return info
         if body == "error":
             error = env.error
             self._stop_reconnect = error.code == "unauthorized"
@@ -733,6 +796,12 @@ class AsyncClient:
             self._resolve_pending(
                 env.list_node_logged_in_users_response.request_id,
                 value=logged_in_users_from_proto(list(env.list_node_logged_in_users_response.items)),
+            )
+            return
+        if body == "resolve_user_sessions_response":
+            self._resolve_pending(
+                env.resolve_user_sessions_response.request_id,
+                value=resolved_user_sessions_from_proto(env.resolve_user_sessions_response),
             )
             return
         if body == "operations_status_response":
