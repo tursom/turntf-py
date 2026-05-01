@@ -15,8 +15,10 @@ from turntf import (
     MessageCursor,
     NopHandler,
     Packet,
+    ScanUserMetadataRequest,
     SessionRef,
     UpdateUserRequest,
+    UpsertUserMetadataRequest,
     UserRef,
     plain_password,
 )
@@ -538,6 +540,168 @@ def test_client_reconnect_uses_seen_messages() -> None:
             await server_task
             assert attempts == 2
             assert second_seen == [(4096, 11)]
+        finally:
+            await client.close()
+
+    asyncio.run(main())
+
+
+def test_client_user_metadata_rpcs() -> None:
+    async def main() -> None:
+        dialer = FakeDialer()
+
+        def metadata_message(
+            key: str,
+            value: bytes,
+            updated_at: str,
+            *,
+            deleted_at: str = "",
+            expires_at: str = "",
+        ) -> pb.UserMetadata:
+            return pb.UserMetadata(
+                owner=pb.UserRef(node_id=4096, user_id=1025),
+                key=key,
+                value=value,
+                updated_at=updated_at,
+                deleted_at=deleted_at,
+                expires_at=expires_at,
+                origin_node_id=4096,
+            )
+
+        async def server_logic() -> None:
+            conn = await dialer.connections.get()
+            await conn.server_recv()
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    login_response=pb.LoginResponse(
+                        user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
+                        protocol_version="client-v1alpha2",
+                        session_ref=pb_session_ref("sess-meta"),
+                    )
+                )
+            )
+
+            get_req = await conn.server_recv()
+            assert get_req.get_user_metadata.owner.node_id == 4096
+            assert get_req.get_user_metadata.owner.user_id == 1025
+            assert get_req.get_user_metadata.key == "prefs.theme"
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    get_user_metadata_response=pb.GetUserMetadataResponse(
+                        request_id=get_req.get_user_metadata.request_id,
+                        metadata=metadata_message(
+                            "prefs.theme",
+                            b"\x01\x02\x03",
+                            "hlc-meta-1",
+                            expires_at="2026-05-01T00:00:00Z",
+                        ),
+                    )
+                )
+            )
+
+            upsert_req = await conn.server_recv()
+            assert upsert_req.upsert_user_metadata.key == "prefs.theme"
+            assert upsert_req.upsert_user_metadata.value == b"\x09\x08\x07"
+            assert upsert_req.upsert_user_metadata.expires_at.value == "2026-05-01T00:00:00Z"
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    upsert_user_metadata_response=pb.UpsertUserMetadataResponse(
+                        request_id=upsert_req.upsert_user_metadata.request_id,
+                        metadata=metadata_message(
+                            "prefs.theme",
+                            bytes(upsert_req.upsert_user_metadata.value),
+                            "hlc-meta-2",
+                            expires_at=upsert_req.upsert_user_metadata.expires_at.value,
+                        ),
+                    )
+                )
+            )
+
+            delete_req = await conn.server_recv()
+            assert delete_req.delete_user_metadata.key == "prefs.theme"
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    delete_user_metadata_response=pb.DeleteUserMetadataResponse(
+                        request_id=delete_req.delete_user_metadata.request_id,
+                        metadata=metadata_message(
+                            "prefs.theme",
+                            b"\x09\x08\x07",
+                            "hlc-meta-3",
+                            deleted_at="hlc-meta-delete",
+                            expires_at="2026-05-01T00:00:00Z",
+                        ),
+                    )
+                )
+            )
+
+            scan_req = await conn.server_recv()
+            assert scan_req.scan_user_metadata.prefix == "prefs."
+            assert scan_req.scan_user_metadata.after == "prefs.theme"
+            assert scan_req.scan_user_metadata.limit == 2
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    scan_user_metadata_response=pb.ScanUserMetadataResponse(
+                        request_id=scan_req.scan_user_metadata.request_id,
+                        items=[
+                            metadata_message(
+                                "prefs.theme",
+                                b"\x01\x02\x03",
+                                "hlc-meta-1",
+                                expires_at="2026-05-01T00:00:00Z",
+                            ),
+                            metadata_message("prefs.volume", b"\x04\x05", "hlc-meta-4"),
+                        ],
+                        count=2,
+                        next_after="prefs.volume",
+                    )
+                )
+            )
+
+        server_task = asyncio.create_task(server_logic())
+        client = FakeAsyncClient(
+            Config(
+                base_url="http://turntf.test",
+                credentials=Credentials(
+                    node_id=4096,
+                    user_id=1025,
+                    password=plain_password("alice-password"),
+                ),
+                request_timeout=1.0,
+                ping_interval=3600.0,
+            ),
+            dialer,
+        )
+        try:
+            await client.connect()
+            owner = UserRef(node_id=4096, user_id=1025)
+
+            metadata = await client.get_user_metadata(owner, "prefs.theme")
+            assert metadata.value == b"\x01\x02\x03"
+            assert metadata.expires_at == "2026-05-01T00:00:00Z"
+
+            upserted = await client.upsert_user_metadata(
+                owner,
+                "prefs.theme",
+                UpsertUserMetadataRequest(
+                    value=b"\x09\x08\x07",
+                    expires_at="2026-05-01T00:00:00Z",
+                ),
+            )
+            assert upserted.updated_at == "hlc-meta-2"
+            assert upserted.value == b"\x09\x08\x07"
+
+            deleted = await client.delete_user_metadata(owner, "prefs.theme")
+            assert deleted.deleted_at == "hlc-meta-delete"
+
+            scanned = await client.scan_user_metadata(
+                owner,
+                ScanUserMetadataRequest(prefix="prefs.", after="prefs.theme", limit=2),
+            )
+            assert scanned.count == 2
+            assert scanned.next_after == "prefs.volume"
+            assert scanned.items[1].value == b"\x04\x05"
+
+            await server_task
         finally:
             await client.close()
 

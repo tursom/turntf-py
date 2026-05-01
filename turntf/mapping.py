@@ -31,6 +31,8 @@ from .types import (
     SessionRef,
     Subscription,
     User,
+    UserMetadata,
+    UserMetadataScanResult,
     UserRef,
 )
 
@@ -120,6 +122,20 @@ def user_from_proto(user: pb.User | None) -> User:
         created_at=user.created_at,
         updated_at=user.updated_at,
         origin_node_id=user.origin_node_id,
+    )
+
+
+def user_metadata_from_proto(metadata: pb.UserMetadata | None) -> UserMetadata:
+    if metadata is None:
+        raise ProtocolError("missing user_metadata")
+    return UserMetadata(
+        owner=user_ref_from_proto(metadata.owner),
+        key=metadata.key,
+        value=bytes(metadata.value),
+        updated_at=metadata.updated_at,
+        deleted_at=metadata.deleted_at,
+        expires_at=metadata.expires_at,
+        origin_node_id=metadata.origin_node_id,
     )
 
 
@@ -403,6 +419,18 @@ def logged_in_users_from_proto(items: list[pb.LoggedInUser]) -> list[LoggedInUse
     return [logged_in_user_from_proto(item) for item in items]
 
 
+def user_metadata_scan_result_from_proto(
+    response: pb.ScanUserMetadataResponse | None,
+) -> UserMetadataScanResult:
+    if response is None:
+        raise ProtocolError("missing scan_user_metadata_response")
+    return UserMetadataScanResult(
+        items=[user_metadata_from_proto(item) for item in response.items],
+        count=response.count,
+        next_after=response.next_after,
+    )
+
+
 def online_presence_from_proto(items: list[pb.OnlineNodePresence]) -> list[OnlineNodePresence]:
     return [online_node_presence_from_proto(item) for item in items]
 
@@ -441,6 +469,35 @@ def user_from_http(data: dict[str, Any]) -> User:
         created_at=_str_value(data.get("created_at")),
         updated_at=_str_value(data.get("updated_at")),
         origin_node_id=_int_value(data.get("origin_node_id")),
+    )
+
+
+def user_metadata_from_http(data: dict[str, Any]) -> UserMetadata:
+    return UserMetadata(
+        owner=user_ref_from_http(data.get("owner")),
+        key=_str_value(data.get("key")),
+        value=_base64_to_bytes(data.get("value")),
+        updated_at=_str_value(data.get("updated_at")),
+        deleted_at=_str_value(data.get("deleted_at")),
+        expires_at=_str_value(data.get("expires_at")),
+        origin_node_id=_int_value(data.get("origin_node_id")),
+    )
+
+
+def user_metadata_scan_result_from_http(data: dict[str, Any]) -> UserMetadataScanResult:
+    items_value = data.get("items")
+    if not isinstance(items_value, list):
+        raise ProtocolError("missing items in scan_user_metadata response")
+    items: list[UserMetadata] = []
+    for item in items_value:
+        if not isinstance(item, dict):
+            raise ProtocolError("unexpected user metadata item")
+        items.append(user_metadata_from_http(item))
+    count = data.get("count")
+    return UserMetadataScanResult(
+        items=items,
+        count=len(items) if count is None or count == "" else _int_value(count),
+        next_after=_str_value(data.get("next_after")),
     )
 
 

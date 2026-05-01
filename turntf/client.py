@@ -42,6 +42,8 @@ from .mapping import (
     subscription_from_proto,
     subscriptions_from_proto,
     user_from_proto,
+    user_metadata_from_proto,
+    user_metadata_scan_result_from_proto,
     user_ref_to_proto,
 )
 from .password import PasswordInput, plain_password
@@ -63,13 +65,24 @@ from .types import (
     Packet,
     RelayAccepted,
     ResolvedUserSessions,
+    ScanUserMetadataRequest,
     SessionRef,
     Subscription,
     UpdateUserRequest,
+    UpsertUserMetadataRequest,
     User,
+    UserMetadata,
+    UserMetadataScanResult,
     UserRef,
 )
-from .validation import validate_delivery_mode, validate_positive_int, validate_session_ref, validate_user_ref
+from .validation import (
+    validate_delivery_mode,
+    validate_positive_int,
+    validate_session_ref,
+    validate_user_metadata_key,
+    validate_user_metadata_scan_request,
+    validate_user_ref,
+)
 
 
 class Handler:
@@ -347,6 +360,89 @@ class AsyncClient:
         )
         if not isinstance(result, DeleteUserResult):
             raise ProtocolError("missing status in delete_user_response")
+        return result
+
+    async def get_user_metadata(self, owner: UserRef, key: str) -> UserMetadata:
+        validate_user_ref(owner, "owner")
+        validate_user_metadata_key(key, "key")
+        result = await self._rpc(
+            lambda request_id: pb.ClientEnvelope(
+                get_user_metadata=pb.GetUserMetadataRequest(
+                    request_id=request_id,
+                    owner=user_ref_to_proto(owner),
+                    key=key,
+                )
+            )
+        )
+        if not isinstance(result, UserMetadata):
+            raise ProtocolError("missing metadata in get_user_metadata_response")
+        return result
+
+    async def upsert_user_metadata(
+        self,
+        owner: UserRef,
+        key: str,
+        request: UpsertUserMetadataRequest,
+    ) -> UserMetadata:
+        validate_user_ref(owner, "owner")
+        validate_user_metadata_key(key, "key")
+        if request.value is None:
+            raise ValueError("request.value is required")
+
+        def build(request_id: int) -> pb.ClientEnvelope:
+            message = pb.UpsertUserMetadataRequest(
+                request_id=request_id,
+                owner=user_ref_to_proto(owner),
+                key=key,
+                value=request.value,
+            )
+            if request.expires_at is not None:
+                message.expires_at.CopyFrom(pb.StringField(value=request.expires_at))
+            return pb.ClientEnvelope(upsert_user_metadata=message)
+
+        result = await self._rpc(build)
+        if not isinstance(result, UserMetadata):
+            raise ProtocolError("missing metadata in upsert_user_metadata_response")
+        return result
+
+    async def delete_user_metadata(self, owner: UserRef, key: str) -> UserMetadata:
+        validate_user_ref(owner, "owner")
+        validate_user_metadata_key(key, "key")
+        result = await self._rpc(
+            lambda request_id: pb.ClientEnvelope(
+                delete_user_metadata=pb.DeleteUserMetadataRequest(
+                    request_id=request_id,
+                    owner=user_ref_to_proto(owner),
+                    key=key,
+                )
+            )
+        )
+        if not isinstance(result, UserMetadata):
+            raise ProtocolError("missing metadata in delete_user_metadata_response")
+        return result
+
+    async def scan_user_metadata(
+        self,
+        owner: UserRef,
+        request: ScanUserMetadataRequest | None = None,
+    ) -> UserMetadataScanResult:
+        validate_user_ref(owner, "owner")
+        if request is None:
+            request = ScanUserMetadataRequest()
+        validate_user_metadata_scan_request(request, "request")
+        result = await self._rpc(
+            lambda request_id: pb.ClientEnvelope(
+                scan_user_metadata=pb.ScanUserMetadataRequest(
+                    request_id=request_id,
+                    owner=user_ref_to_proto(owner),
+                    prefix=request.prefix,
+                    after=request.after,
+                    limit=request.limit,
+                )
+            )
+        )
+        if not isinstance(result, UserMetadataScanResult):
+            raise ProtocolError("missing items in scan_user_metadata_response")
         return result
 
     async def upsert_attachment(
@@ -754,6 +850,30 @@ class AsyncClient:
                         user_id=env.delete_user_response.user.user_id,
                     ),
                 ),
+            )
+            return
+        if body == "get_user_metadata_response":
+            self._resolve_pending(
+                env.get_user_metadata_response.request_id,
+                value=user_metadata_from_proto(env.get_user_metadata_response.metadata),
+            )
+            return
+        if body == "upsert_user_metadata_response":
+            self._resolve_pending(
+                env.upsert_user_metadata_response.request_id,
+                value=user_metadata_from_proto(env.upsert_user_metadata_response.metadata),
+            )
+            return
+        if body == "delete_user_metadata_response":
+            self._resolve_pending(
+                env.delete_user_metadata_response.request_id,
+                value=user_metadata_from_proto(env.delete_user_metadata_response.metadata),
+            )
+            return
+        if body == "scan_user_metadata_response":
+            self._resolve_pending(
+                env.scan_user_metadata_response.request_id,
+                value=user_metadata_scan_result_from_proto(env.scan_user_metadata_response),
             )
             return
         if body == "list_messages_response":

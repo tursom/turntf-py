@@ -104,6 +104,24 @@ class Attachment:
 
 
 @dataclass(slots=True)
+class UserMetadata:
+    owner: UserRef
+    key: str
+    value: bytes
+    updated_at: str
+    deleted_at: str
+    expires_at: str
+    origin_node_id: int
+
+
+@dataclass(slots=True)
+class UserMetadataScanResult:
+    items: list[UserMetadata] = field(default_factory=list)
+    count: int = 0
+    next_after: str = ""
+
+
+@dataclass(slots=True)
 class Subscription:
     subscriber: UserRef
     channel: UserRef
@@ -269,3 +287,16 @@ class UpdateUserRequest:
     password: PasswordInput | None = None
     profile_json: bytes | None = None
     role: str | None = None
+
+
+@dataclass(slots=True)
+class UpsertUserMetadataRequest:
+    value: bytes
+    expires_at: str | None = None
+
+
+@dataclass(slots=True)
+class ScanUserMetadataRequest:
+    prefix: str = ""
+    after: str = ""
+    limit: int = 0

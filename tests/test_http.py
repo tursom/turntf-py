@@ -7,7 +7,17 @@ import json
 import bcrypt
 import httpx
 
-from turntf import AsyncHTTPClient, CreateUserRequest, DeliveryMode, SessionRef, UpdateUserRequest, UserRef, plain_password
+from turntf import (
+    AsyncHTTPClient,
+    CreateUserRequest,
+    DeliveryMode,
+    ScanUserMetadataRequest,
+    SessionRef,
+    UpdateUserRequest,
+    UpsertUserMetadataRequest,
+    UserRef,
+    plain_password,
+)
 
 
 def test_http_client_requests_and_encoding() -> None:
@@ -75,6 +85,78 @@ def test_http_client_requests_and_encoding() -> None:
 
             if path == "/nodes/4096/users/1025" and method == "DELETE":
                 return httpx.Response(200, json={"status": "deleted", "node_id": 4096, "user_id": 1025})
+
+            if path == "/nodes/4096/users/1025/metadata/prefs.theme" and method == "GET":
+                return httpx.Response(
+                    200,
+                    json={
+                        "owner": {"node_id": 4096, "user_id": 1025},
+                        "key": "prefs.theme",
+                        "value": base64.b64encode(b"\x01\x02\x03").decode("ascii"),
+                        "updated_at": "hlc-meta-1",
+                        "expires_at": "2026-05-01T00:00:00Z",
+                        "origin_node_id": 4096,
+                    },
+                )
+
+            if path == "/nodes/4096/users/1025/metadata/prefs.theme" and method == "PUT":
+                assert body is not None
+                assert body["value"] == base64.b64encode(b"\x00\x01\x02").decode("ascii")
+                assert body["expires_at"] == "2026-05-01T00:00:00Z"
+                return httpx.Response(
+                    201,
+                    json={
+                        "owner": {"node_id": 4096, "user_id": 1025},
+                        "key": "prefs.theme",
+                        "value": body["value"],
+                        "updated_at": "hlc-meta-2",
+                        "expires_at": body["expires_at"],
+                        "origin_node_id": 4096,
+                    },
+                )
+
+            if path == "/nodes/4096/users/1025/metadata/prefs.theme" and method == "DELETE":
+                return httpx.Response(
+                    200,
+                    json={
+                        "owner": {"node_id": 4096, "user_id": 1025},
+                        "key": "prefs.theme",
+                        "value": base64.b64encode(b"\x00\x01\x02").decode("ascii"),
+                        "updated_at": "hlc-meta-3",
+                        "deleted_at": "hlc-meta-delete",
+                        "expires_at": "2026-05-01T00:00:00Z",
+                        "origin_node_id": 4096,
+                    },
+                )
+
+            if path == "/nodes/4096/users/1025/metadata" and method == "GET":
+                assert request.url.params.get("prefix") == "prefs."
+                assert request.url.params.get("after") == "prefs.theme"
+                assert request.url.params.get("limit") == "2"
+                return httpx.Response(
+                    200,
+                    json={
+                        "items": [
+                            {
+                                "owner": {"node_id": 4096, "user_id": 1025},
+                                "key": "prefs.theme",
+                                "value": base64.b64encode(b"\x01\x02\x03").decode("ascii"),
+                                "updated_at": "hlc-meta-1",
+                                "expires_at": "2026-05-01T00:00:00Z",
+                                "origin_node_id": 4096,
+                            },
+                            {
+                                "owner": {"node_id": 4096, "user_id": 1025},
+                                "key": "prefs.volume",
+                                "value": base64.b64encode(b"\x04\x05").decode("ascii"),
+                                "updated_at": "hlc-meta-4",
+                                "origin_node_id": 4096,
+                            },
+                        ],
+                        "count": 2,
+                        "next_after": "prefs.volume",
+                    },
+                )
 
             if path == "/nodes/4096/users/1025/attachments/channel_subscription/4096/2025" and method == "PUT":
                 return httpx.Response(
@@ -368,6 +450,38 @@ def test_http_client_requests_and_encoding() -> None:
         message = await client.post_message(token, UserRef(node_id=4096, user_id=1025), b"\xff\x00")
         assert message.seq == 4
 
+        metadata = await client.get_user_metadata(token, UserRef(node_id=4096, user_id=1025), "prefs.theme")
+        assert metadata.value == b"\x01\x02\x03"
+        assert metadata.expires_at == "2026-05-01T00:00:00Z"
+
+        upserted_metadata = await client.upsert_user_metadata(
+            token,
+            UserRef(node_id=4096, user_id=1025),
+            "prefs.theme",
+            UpsertUserMetadataRequest(
+                value=b"\x00\x01\x02",
+                expires_at="2026-05-01T00:00:00Z",
+            ),
+        )
+        assert upserted_metadata.updated_at == "hlc-meta-2"
+        assert upserted_metadata.value == b"\x00\x01\x02"
+
+        deleted_metadata = await client.delete_user_metadata(
+            token,
+            UserRef(node_id=4096, user_id=1025),
+            "prefs.theme",
+        )
+        assert deleted_metadata.deleted_at == "hlc-meta-delete"
+
+        scanned_metadata = await client.scan_user_metadata(
+            token,
+            UserRef(node_id=4096, user_id=1025),
+            ScanUserMetadataRequest(prefix="prefs.", after="prefs.theme", limit=2),
+        )
+        assert scanned_metadata.count == 2
+        assert scanned_metadata.next_after == "prefs.volume"
+        assert scanned_metadata.items[1].value == b"\x04\x05"
+
         packet = await client.post_packet(
             token,
             8192,
@@ -432,6 +546,35 @@ def test_http_client_list_node_logged_in_users_requires_node_id() -> None:
                 await client.list_node_logged_in_users("token", 0)
             except ValueError as exc:
                 assert "node_id is required" in str(exc)
+            else:
+                raise AssertionError("expected validation error")
+        finally:
+            await client.close()
+            await inner.aclose()
+
+    asyncio.run(main())
+
+
+def test_http_client_user_metadata_validation() -> None:
+    async def main() -> None:
+        inner = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+        client = AsyncHTTPClient("http://127.0.0.1:8080", client=inner)
+        try:
+            try:
+                await client.get_user_metadata("token", UserRef(node_id=4096, user_id=1025), "bad key")
+            except ValueError as exc:
+                assert "key contains unsupported characters" in str(exc)
+            else:
+                raise AssertionError("expected validation error")
+
+            try:
+                await client.scan_user_metadata(
+                    "token",
+                    UserRef(node_id=4096, user_id=1025),
+                    ScanUserMetadataRequest(prefix="prefs.", after="other.key", limit=2),
+                )
+            except ValueError as exc:
+                assert "request.after must use the same prefix as request.prefix" in str(exc)
             else:
                 raise AssertionError("expected validation error")
         finally:

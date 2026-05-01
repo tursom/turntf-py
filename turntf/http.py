@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from typing import Any, Iterable
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -19,6 +20,8 @@ from .mapping import (
     relay_accepted_from_http,
     subscription_from_http,
     user_from_http,
+    user_metadata_from_http,
+    user_metadata_scan_result_from_http,
 )
 from .password import PasswordInput, plain_password
 from .types import (
@@ -33,12 +36,22 @@ from .types import (
     LoggedInUser,
     Message,
     OperationsStatus,
+    ScanUserMetadataRequest,
     Subscription,
     UpdateUserRequest,
+    UpsertUserMetadataRequest,
     User,
+    UserMetadata,
+    UserMetadataScanResult,
     UserRef,
 )
-from .validation import validate_delivery_mode, validate_positive_int, validate_user_ref
+from .validation import (
+    validate_delivery_mode,
+    validate_positive_int,
+    validate_user_metadata_key,
+    validate_user_metadata_scan_request,
+    validate_user_ref,
+)
 
 
 class AsyncHTTPClient:
@@ -155,6 +168,80 @@ class AsyncHTTPClient:
             {200},
         )
         return delete_user_result_from_http(_expect_dict(response, "delete user response"))
+
+    async def get_user_metadata(self, token: str, owner: UserRef, key: str) -> UserMetadata:
+        validate_user_ref(owner, "owner")
+        validate_user_metadata_key(key, "key")
+        response = await self._do_json(
+            "GET",
+            f"/nodes/{owner.node_id}/users/{owner.user_id}/metadata/{quote(key, safe='')}",
+            token,
+            None,
+            {200},
+        )
+        return user_metadata_from_http(_expect_dict(response, "get user metadata response"))
+
+    async def upsert_user_metadata(
+        self,
+        token: str,
+        owner: UserRef,
+        key: str,
+        request: UpsertUserMetadataRequest,
+    ) -> UserMetadata:
+        validate_user_ref(owner, "owner")
+        validate_user_metadata_key(key, "key")
+        if request.value is None:
+            raise ValueError("request.value is required")
+        body: dict[str, Any] = {"value": base64.b64encode(request.value).decode("ascii")}
+        if request.expires_at is not None:
+            body["expires_at"] = request.expires_at
+        response = await self._do_json(
+            "PUT",
+            f"/nodes/{owner.node_id}/users/{owner.user_id}/metadata/{quote(key, safe='')}",
+            token,
+            body,
+            {200, 201},
+        )
+        return user_metadata_from_http(_expect_dict(response, "upsert user metadata response"))
+
+    async def delete_user_metadata(self, token: str, owner: UserRef, key: str) -> UserMetadata:
+        validate_user_ref(owner, "owner")
+        validate_user_metadata_key(key, "key")
+        response = await self._do_json(
+            "DELETE",
+            f"/nodes/{owner.node_id}/users/{owner.user_id}/metadata/{quote(key, safe='')}",
+            token,
+            None,
+            {200},
+        )
+        return user_metadata_from_http(_expect_dict(response, "delete user metadata response"))
+
+    async def scan_user_metadata(
+        self,
+        token: str,
+        owner: UserRef,
+        request: ScanUserMetadataRequest | None = None,
+    ) -> UserMetadataScanResult:
+        validate_user_ref(owner, "owner")
+        if request is None:
+            request = ScanUserMetadataRequest()
+        validate_user_metadata_scan_request(request, "request")
+        query: dict[str, str] = {}
+        if request.prefix != "":
+            query["prefix"] = request.prefix
+        if request.after != "":
+            query["after"] = request.after
+        if request.limit > 0:
+            query["limit"] = str(request.limit)
+        suffix = f"?{urlencode(query)}" if query else ""
+        response = await self._do_json(
+            "GET",
+            f"/nodes/{owner.node_id}/users/{owner.user_id}/metadata{suffix}",
+            token,
+            None,
+            {200},
+        )
+        return user_metadata_scan_result_from_http(_expect_dict(response, "scan user metadata response"))
 
     async def create_subscription(self, token: str, user: UserRef, channel: UserRef) -> Subscription:
         attachment = await self.upsert_attachment(
