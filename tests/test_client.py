@@ -156,7 +156,13 @@ def test_client_login_message_ack_send_and_ping() -> None:
             await conn.server_send(
                 pb.ServerEnvelope(
                     login_response=pb.LoginResponse(
-                        user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
+                        user=pb.User(
+                            node_id=4096,
+                            user_id=1025,
+                            username="alice",
+                            role="user",
+                            login_name="alice.login",
+                        ),
                         protocol_version="client-v1alpha1",
                         session_ref=pb_session_ref("sess-alice"),
                     )
@@ -221,6 +227,8 @@ def test_client_login_message_ack_send_and_ping() -> None:
         try:
             await client.connect()
             assert client.session_ref == SessionRef(serving_node_id=4096, session_id="sess-alice")
+            assert client.login_info is not None
+            assert client.login_info.user.login_name == "alice.login"
             message = await client.send_message(UserRef(node_id=4096, user_id=1025), b"payload")
             assert message.seq == 8
             await client.ping()
@@ -246,10 +254,18 @@ def test_client_transient_only_and_realtime_path() -> None:
             observed["path"] = conn.request.path
             login = await conn.server_recv()
             observed["transient_only"] = login.login.transient_only
+            observed["login_name"] = login.login.login_name
+            observed["has_user"] = login.login.HasField("user")
             await conn.server_send(
                 pb.ServerEnvelope(
                     login_response=pb.LoginResponse(
-                        user=pb.User(node_id=4096, user_id=1025, username="alice", role="user"),
+                        user=pb.User(
+                            node_id=4096,
+                            user_id=1025,
+                            username="alice",
+                            role="user",
+                            login_name="alice.login",
+                        ),
                         protocol_version="client-v1alpha1",
                         session_ref=pb_session_ref("sess-transient"),
                     )
@@ -261,8 +277,7 @@ def test_client_transient_only_and_realtime_path() -> None:
             Config(
                 base_url="https://turntf.test/base",
                 credentials=Credentials(
-                    node_id=4096,
-                    user_id=1025,
+                    login_name="alice.login",
                     password=plain_password("alice-password"),
                 ),
                 transient_only=True,
@@ -279,6 +294,8 @@ def test_client_transient_only_and_realtime_path() -> None:
             await client.close()
 
         assert observed["transient_only"] is True
+        assert observed["login_name"] == "alice.login"
+        assert observed["has_user"] is False
         assert observed["path"] == "wss://turntf.test/base/ws/realtime"
 
     asyncio.run(main())
@@ -727,22 +744,37 @@ def test_client_management_rpcs_and_password_hashing() -> None:
 
             create_req = await conn.server_recv()
             assert bcrypt.checkpw(b"alice-password", create_req.create_user.password.encode("utf-8"))
+            assert create_req.create_user.login_name == "alice.login"
             await conn.server_send(
                 pb.ServerEnvelope(
                     create_user_response=pb.CreateUserResponse(
                         request_id=create_req.create_user.request_id,
-                        user=pb.User(node_id=4096, user_id=2025, username="alice", role="user"),
+                        user=pb.User(
+                            node_id=4096,
+                            user_id=2025,
+                            username="alice",
+                            role="user",
+                            login_name="alice.login",
+                        ),
                     )
                 )
             )
 
             update_req = await conn.server_recv()
             assert bcrypt.checkpw(b"new-password", update_req.update_user.password.value.encode("utf-8"))
+            assert update_req.update_user.HasField("login_name")
+            assert update_req.update_user.login_name.value == ""
             await conn.server_send(
                 pb.ServerEnvelope(
                     update_user_response=pb.UpdateUserResponse(
                         request_id=update_req.update_user.request_id,
-                        user=pb.User(node_id=4096, user_id=2025, username="alice-2", role="admin"),
+                        user=pb.User(
+                            node_id=4096,
+                            user_id=2025,
+                            username="alice-2",
+                            role="admin",
+                            login_name="",
+                        ),
                     )
                 )
             )
@@ -883,8 +915,13 @@ def test_client_management_rpcs_and_password_hashing() -> None:
                         request_id=users_req.list_node_logged_in_users.request_id,
                         target_node_id=4096,
                         items=[
-                            pb.LoggedInUser(node_id=4096, user_id=1025, username="alice"),
-                            pb.LoggedInUser(node_id=4096, user_id=1026, username="bob"),
+                            pb.LoggedInUser(
+                                node_id=4096,
+                                user_id=1025,
+                                username="alice",
+                                login_name="alice.login",
+                            ),
+                            pb.LoggedInUser(node_id=4096, user_id=1026, username="bob", login_name=""),
                         ],
                         count=2,
                     )
@@ -979,17 +1016,25 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             created = await client.create_user(
                 CreateUserRequest(
                     username="alice",
+                    login_name="alice.login",
                     password=plain_password("alice-password"),
                     role="user",
                 )
             )
             assert created.user_id == 2025
+            assert created.login_name == "alice.login"
 
             updated = await client.update_user(
                 UserRef(node_id=4096, user_id=2025),
-                UpdateUserRequest(password=plain_password("new-password"), username="alice-2", role="admin"),
+                UpdateUserRequest(
+                    password=plain_password("new-password"),
+                    username="alice-2",
+                    role="admin",
+                    login_name="",
+                ),
             )
             assert updated.username == "alice-2"
+            assert updated.login_name == ""
 
             subscription = await client.subscribe_channel(
                 UserRef(node_id=4096, user_id=1025),
@@ -1026,6 +1071,7 @@ def test_client_management_rpcs_and_password_hashing() -> None:
 
             users = await client.list_node_logged_in_users(4096)
             assert users[1].user_id == 1026
+            assert users[0].login_name == "alice.login"
 
             events = await client.list_events()
             assert events[0].event_json == b'{"tier":"gold"}'
@@ -1044,6 +1090,26 @@ def test_client_management_rpcs_and_password_hashing() -> None:
             await client.close()
 
     asyncio.run(main())
+
+
+def test_client_rejects_mixed_credentials_selectors() -> None:
+    try:
+        FakeAsyncClient(
+            Config(
+                base_url="http://turntf.test",
+                credentials=Credentials(
+                    node_id=4096,
+                    user_id=1025,
+                    login_name="alice.login",
+                    password=plain_password("alice-password"),
+                ),
+            ),
+            FakeDialer(),
+        )
+    except ValueError as exc:
+        assert "exactly one of (node_id,user_id) or login_name" in str(exc)
+    else:
+        raise AssertionError("expected validation error")
 
 
 def test_memory_cursor_store_and_generated_proto_import() -> None:

@@ -19,11 +19,26 @@ class AttachmentType(str, Enum):
     USER_BLACKLIST = "user_blacklist"
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True, frozen=True, init=False)
 class Credentials:
     node_id: int
     user_id: int
     password: PasswordInput
+    login_name: str
+
+    def __init__(
+        self,
+        node_id: int = 0,
+        user_id: int = 0,
+        password: PasswordInput | None = None,
+        login_name: str = "",
+    ) -> None:
+        if password is None:
+            raise TypeError("password is required")
+        object.__setattr__(self, "node_id", node_id)
+        object.__setattr__(self, "user_id", user_id)
+        object.__setattr__(self, "password", password)
+        object.__setattr__(self, "login_name", login_name.strip())
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,6 +70,7 @@ class User:
     created_at: str
     updated_at: str
     origin_node_id: int
+    login_name: str = ""
 
 
 @dataclass(slots=True)
@@ -165,6 +181,7 @@ class LoggedInUser:
     node_id: int
     user_id: int
     username: str
+    login_name: str = ""
 
 
 @dataclass(slots=True)
@@ -279,6 +296,7 @@ class CreateUserRequest:
     password: PasswordInput | None = None
     profile_json: bytes = b""
     role: str = ""
+    login_name: str = ""
 
 
 @dataclass(slots=True)
@@ -287,6 +305,7 @@ class UpdateUserRequest:
     password: PasswordInput | None = None
     profile_json: bytes | None = None
     role: str | None = None
+    login_name: str | None = None
 
 
 @dataclass(slots=True)

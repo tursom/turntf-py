@@ -47,6 +47,7 @@ from .types import (
 )
 from .validation import (
     validate_delivery_mode,
+    validate_login_selector,
     validate_positive_int,
     validate_user_metadata_key,
     validate_user_metadata_scan_request,
@@ -78,21 +79,52 @@ class AsyncHTTPClient:
         if self._owns_client:
             await self._client.aclose()
 
-    async def login(self, node_id: int, user_id: int, password: str) -> str:
-        return await self.login_with_password(node_id, user_id, plain_password(password))
+    async def login(
+        self,
+        node_id: int | None = None,
+        user_id: int | None = None,
+        password: str | None = None,
+        *,
+        login_name: str | None = None,
+    ) -> str:
+        if password is None:
+            raise ValueError("password is required")
+        return await self.login_with_password(
+            node_id=node_id,
+            user_id=user_id,
+            password=plain_password(password),
+            login_name=login_name,
+        )
 
-    async def login_with_password(self, node_id: int, user_id: int, password: PasswordInput) -> str:
-        validate_positive_int(node_id, "node_id")
-        validate_positive_int(user_id, "user_id")
+    async def login_with_password(
+        self,
+        node_id: int | None = None,
+        user_id: int | None = None,
+        password: PasswordInput | None = None,
+        *,
+        login_name: str | None = None,
+    ) -> str:
+        if password is None:
+            raise ValueError("password is required")
+        normalized_login_name = validate_login_selector(
+            node_id=node_id,
+            user_id=user_id,
+            login_name=login_name,
+            field="login",
+        )
+        body: dict[str, Any] = {"password": password.wire_value()}
+        if normalized_login_name != "":
+            body["login_name"] = normalized_login_name
+        else:
+            assert node_id is not None
+            assert user_id is not None
+            body["node_id"] = node_id
+            body["user_id"] = user_id
         response = await self._do_json(
             "POST",
             "/auth/login",
             "",
-            {
-                "node_id": node_id,
-                "user_id": user_id,
-                "password": password.wire_value(),
-            },
+            body,
             {200},
         )
         if not isinstance(response, dict):
@@ -108,6 +140,8 @@ class AsyncHTTPClient:
         if request.role == "":
             raise ValueError("role is required")
         body: dict[str, Any] = {"username": request.username, "role": request.role}
+        if request.login_name != "":
+            body["login_name"] = request.login_name
         if request.password is not None:
             body["password"] = request.password.wire_value()
         if request.profile_json:
@@ -124,6 +158,7 @@ class AsyncHTTPClient:
                 password=request.password,
                 profile_json=request.profile_json,
                 role=role,
+                login_name=request.login_name,
             ),
         )
 
@@ -143,6 +178,8 @@ class AsyncHTTPClient:
         body: dict[str, Any] = {}
         if request.username is not None:
             body["username"] = request.username
+        if request.login_name is not None:
+            body["login_name"] = request.login_name
         if request.password is not None:
             body["password"] = request.password.wire_value()
         if request.profile_json is not None:

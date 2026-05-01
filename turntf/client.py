@@ -77,6 +77,7 @@ from .types import (
 )
 from .validation import (
     validate_delivery_mode,
+    validate_login_selector,
     validate_positive_int,
     validate_session_ref,
     validate_user_metadata_key,
@@ -127,8 +128,12 @@ class AsyncClient:
     def __init__(self, config: Config) -> None:
         if config.base_url.strip() == "":
             raise ValueError("base_url is required")
-        validate_positive_int(config.credentials.node_id, "credentials.node_id")
-        validate_positive_int(config.credentials.user_id, "credentials.user_id")
+        validate_login_selector(
+            node_id=config.credentials.node_id if config.credentials.node_id != 0 else None,
+            user_id=config.credentials.user_id if config.credentials.user_id != 0 else None,
+            login_name=config.credentials.login_name,
+            field="credentials",
+        )
         config.credentials.password.validate()
 
         self._cfg = Config(
@@ -181,11 +186,35 @@ class AsyncClient:
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         await self.close()
 
-    async def login(self, node_id: int, user_id: int, password: str) -> str:
-        return await self._http.login(node_id, user_id, password)
+    async def login(
+        self,
+        node_id: int | None = None,
+        user_id: int | None = None,
+        password: str | None = None,
+        *,
+        login_name: str | None = None,
+    ) -> str:
+        return await self._http.login(
+            node_id=node_id,
+            user_id=user_id,
+            password=password,
+            login_name=login_name,
+        )
 
-    async def login_with_password(self, node_id: int, user_id: int, password: PasswordInput) -> str:
-        return await self._http.login_with_password(node_id, user_id, password)
+    async def login_with_password(
+        self,
+        node_id: int | None = None,
+        user_id: int | None = None,
+        password: PasswordInput | None = None,
+        *,
+        login_name: str | None = None,
+    ) -> str:
+        return await self._http.login_with_password(
+            node_id=node_id,
+            user_id=user_id,
+            password=password,
+            login_name=login_name,
+        )
 
     async def connect(self) -> None:
         if self._closed:
@@ -302,6 +331,7 @@ class AsyncClient:
                     password="" if request.password is None else request.password.wire_value(),
                     profile_json=request.profile_json,
                     role=request.role,
+                    login_name=request.login_name,
                 )
             )
         )
@@ -317,6 +347,7 @@ class AsyncClient:
                 password=request.password,
                 profile_json=request.profile_json,
                 role=role,
+                login_name=request.login_name,
             )
         )
 
@@ -338,6 +369,8 @@ class AsyncClient:
             message = pb.UpdateUserRequest(request_id=request_id, user=user_ref_to_proto(target))
             if request.username is not None:
                 message.username.CopyFrom(pb.StringField(value=request.username))
+            if request.login_name is not None:
+                message.login_name.CopyFrom(pb.StringField(value=request.login_name))
             if request.password is not None:
                 message.password.CopyFrom(pb.StringField(value=request.password.wire_value()))
             if request.profile_json is not None:
@@ -712,12 +745,17 @@ class AsyncClient:
             seen = await self._cfg.cursor_store.load_seen_messages()
             ws = await self._dial()
             login_request = pb.LoginRequest(
-                user=user_ref_to_proto(
-                    UserRef(node_id=self._cfg.credentials.node_id, user_id=self._cfg.credentials.user_id)
-                ),
                 password=self._cfg.credentials.password.wire_value(),
                 transient_only=self._cfg.transient_only,
             )
+            if self._cfg.credentials.login_name != "":
+                login_request.login_name = self._cfg.credentials.login_name
+            else:
+                login_request.user.CopyFrom(
+                    user_ref_to_proto(
+                        UserRef(node_id=self._cfg.credentials.node_id, user_id=self._cfg.credentials.user_id)
+                    )
+                )
             login_request.seen_messages.extend(cursor_to_proto(cursor) for cursor in seen)
             await self._write_proto(ws, pb.ClientEnvelope(login=login_request))
             server_env = await self._read_proto(ws)

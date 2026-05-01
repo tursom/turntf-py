@@ -122,6 +122,7 @@ def user_from_proto(user: pb.User | None) -> User:
         created_at=user.created_at,
         updated_at=user.updated_at,
         origin_node_id=user.origin_node_id,
+        login_name=user.login_name,
     )
 
 
@@ -256,7 +257,12 @@ def cluster_node_from_proto(node: pb.ClusterNode | None) -> ClusterNode:
 def logged_in_user_from_proto(user: pb.LoggedInUser | None) -> LoggedInUser:
     if user is None:
         raise ProtocolError("missing logged-in user")
-    return LoggedInUser(node_id=user.node_id, user_id=user.user_id, username=user.username)
+    return LoggedInUser(
+        node_id=user.node_id,
+        user_id=user.user_id,
+        username=user.username,
+        login_name=user.login_name,
+    )
 
 
 def online_node_presence_from_proto(presence: pb.OnlineNodePresence | None) -> OnlineNodePresence:
@@ -469,6 +475,7 @@ def user_from_http(data: dict[str, Any]) -> User:
         created_at=_str_value(data.get("created_at")),
         updated_at=_str_value(data.get("updated_at")),
         origin_node_id=_int_value(data.get("origin_node_id")),
+        login_name=_str_value(data.get("login_name")),
     )
 
 
@@ -578,6 +585,7 @@ def logged_in_user_from_http(data: dict[str, Any]) -> LoggedInUser:
         node_id=_int_value(data.get("node_id")),
         user_id=_int_value(data.get("user_id")),
         username=_str_value(data.get("username")),
+        login_name=_str_value(data.get("login_name")),
     )
 
 

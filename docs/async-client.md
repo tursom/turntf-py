@@ -3,6 +3,7 @@
 这篇文档专门解释 `turntf-py` 里 `AsyncClient` 的运行时行为、消息时序和共享协议约束。它不重复 API 列表，而是重点说明几个最容易写错的地方：
 
 - `AsyncClient` 与 `AsyncHTTPClient` 的关系
+- 双轨登录 selector
 - 异步生命周期和重连边界
 - `session_ref`
 - `save_message -> save_cursor -> ack`
@@ -18,7 +19,7 @@
 `Config` 决定：
 
 - WebSocket 要连到哪个 `base_url`
-- 首帧登录使用哪个 `credentials`
+- 首帧登录使用哪个 `credentials`，即 `(node_id, user_id, password)` 或 `(login_name, password)`
 - 消息与游标持久化落到哪个 `cursor_store`
 - 断线后是否重连，以及退避参数
 - 回调交给哪个 `handler`
@@ -33,6 +34,12 @@
 需要再次强调：
 
 `AsyncClient.login()` 只是在“当前对象里顺手提供一个 HTTP 登录入口”。它不会改变当前 WebSocket 身份，也不会把返回的 token 带到 WebSocket RPC 中。
+
+无论 HTTP 还是 WebSocket，登录 selector 都必须满足：
+
+- 旧方式：提供 `node_id` 与 `user_id`
+- 新方式：提供 `login_name`
+- 两种方式必须二选一，`username` 不参与认证
 
 ### `CursorStore`
 

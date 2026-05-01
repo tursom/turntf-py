@@ -54,6 +54,7 @@ async def main() -> None:
             token,
             CreateUserRequest(
                 username="alice",
+                login_name="alice.login",
                 password=plain_password("alice-password"),
                 profile_json=b'{"tier":"gold"}',
                 role="user",
@@ -119,14 +120,16 @@ AsyncHTTPClient(
 
 ### 认证
 
-#### `login(node_id, user_id, password) -> str`
+#### `login(node_id=None, user_id=None, password=None, *, login_name=None) -> str`
 
 - 使用明文密码登录，SDK 自动做 bcrypt 哈希
+- 支持 `node_id + user_id` 或 `login_name` 两种 selector，且必须二选一
 - 返回 Bearer token
 
-#### `login_with_password(node_id, user_id, password: PasswordInput) -> str`
+#### `login_with_password(node_id=None, user_id=None, password: PasswordInput | None = None, *, login_name=None) -> str`
 
 - 使用 `PasswordInput` 对象登录
+- 支持 `node_id + user_id` 或 `login_name` 两种 selector，且必须二选一
 - 适用于已有哈希值的情况
 
 ### 用户管理
@@ -135,6 +138,7 @@ AsyncHTTPClient(
 
 - `request.role` 必填，不能为空
 - `request.password` 可选
+- `request.login_name` 可选；创建可登录用户时可一并绑定登录名
 - `request.profile_json` 可选，必须是有效 JSON bytes
 
 #### `create_channel(token, request: CreateUserRequest) -> User`
@@ -148,6 +152,7 @@ AsyncHTTPClient(
 #### `update_user(token, target: UserRef, request: UpdateUserRequest) -> User`
 
 - 只更新传入的字段（partial update）
+- `request.login_name=None` 表示不改，`request.login_name=""` 表示解绑
 - `request.password` 需要是 `PasswordInput` 类型
 
 #### `delete_user(token, target: UserRef) -> DeleteUserResult`

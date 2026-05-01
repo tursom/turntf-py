@@ -16,6 +16,24 @@ def validate_positive_int(value: int, field: str) -> None:
         raise ValueError(f"{field} is required")
 
 
+def validate_login_selector(
+    *,
+    node_id: int | None = None,
+    user_id: int | None = None,
+    login_name: str | None = None,
+    field: str = "login",
+) -> str:
+    normalized_login_name = "" if login_name is None else login_name.strip()
+    has_id_selector = node_id is not None or user_id is not None
+    has_login_name_selector = normalized_login_name != ""
+    if has_id_selector == has_login_name_selector:
+        raise ValueError(f"{field} must provide exactly one of (node_id,user_id) or login_name")
+    if has_id_selector:
+        validate_positive_int(0 if node_id is None else node_id, f"{field}.node_id")
+        validate_positive_int(0 if user_id is None else user_id, f"{field}.user_id")
+    return normalized_login_name
+
+
 def validate_user_ref(ref: UserRef, field: str = "user") -> None:
     validate_positive_int(ref.node_id, f"{field}.node_id")
     validate_positive_int(ref.user_id, f"{field}.user_id")

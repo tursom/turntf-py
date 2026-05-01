@@ -30,6 +30,9 @@ def test_http_client_requests_and_encoding() -> None:
             if path == "/auth/login":
                 assert method == "POST"
                 assert body is not None
+                assert body["node_id"] == 4096
+                assert body["user_id"] == 1
+                assert "login_name" not in body
                 password = body["password"]
                 assert password != "root"
                 assert bcrypt.checkpw(b"root", password.encode("utf-8"))
@@ -38,6 +41,7 @@ def test_http_client_requests_and_encoding() -> None:
             if path == "/users" and method == "POST":
                 assert request.headers["Authorization"] == "Bearer admin-token"
                 assert body is not None
+                assert body["login_name"] == "alice.login"
                 password = body["password"]
                 assert password != "alice-password"
                 assert bcrypt.checkpw(b"alice-password", password.encode("utf-8"))
@@ -49,6 +53,7 @@ def test_http_client_requests_and_encoding() -> None:
                         "node_id": 4096,
                         "user_id": 1025,
                         "username": body["username"],
+                        "login_name": body["login_name"],
                         "role": body["role"],
                         "profile": {"tier": "gold"},
                         "created_at": "hlc-created",
@@ -62,6 +67,7 @@ def test_http_client_requests_and_encoding() -> None:
                         "node_id": 4096,
                         "user_id": 1025,
                         "username": "alice",
+                        "login_name": "alice.login",
                         "role": "user",
                         "profile": {"tier": "gold"},
                     },
@@ -69,6 +75,7 @@ def test_http_client_requests_and_encoding() -> None:
 
             if path == "/nodes/4096/users/1025" and method == "PATCH":
                 assert body is not None
+                assert body["login_name"] == ""
                 password = body["password"]
                 assert password != "new-password"
                 assert bcrypt.checkpw(b"new-password", password.encode("utf-8"))
@@ -78,6 +85,7 @@ def test_http_client_requests_and_encoding() -> None:
                         "node_id": 4096,
                         "user_id": 1025,
                         "username": body["username"],
+                        "login_name": body["login_name"],
                         "role": body["role"],
                         "profile": body["profile"],
                     },
@@ -274,8 +282,8 @@ def test_http_client_requests_and_encoding() -> None:
                 return httpx.Response(
                     200,
                     json=[
-                        {"node_id": 4096, "user_id": 1025, "username": "alice"},
-                        {"node_id": 4096, "user_id": 1026, "username": "bob"},
+                        {"node_id": 4096, "user_id": 1025, "username": "alice", "login_name": "alice.login"},
+                        {"node_id": 4096, "user_id": 1026, "username": "bob", "login_name": ""},
                     ],
                 )
 
@@ -401,6 +409,7 @@ def test_http_client_requests_and_encoding() -> None:
             token,
             CreateUserRequest(
                 username="alice",
+                login_name="alice.login",
                 password=plain_password("alice-password"),
                 profile_json=b'{"tier":"gold"}',
                 role="user",
@@ -408,21 +417,25 @@ def test_http_client_requests_and_encoding() -> None:
         )
         assert user.user_id == 1025
         assert user.profile_json == b'{"tier":"gold"}'
+        assert user.login_name == "alice.login"
 
         fetched = await client.get_user(token, UserRef(node_id=4096, user_id=1025))
         assert fetched.username == "alice"
+        assert fetched.login_name == "alice.login"
 
         updated = await client.update_user(
             token,
             UserRef(node_id=4096, user_id=1025),
             UpdateUserRequest(
                 username="alice-2",
+                login_name="",
                 password=plain_password("new-password"),
                 profile_json=b'{"tier":"platinum"}',
                 role="admin",
             ),
         )
         assert updated.username == "alice-2"
+        assert updated.login_name == ""
         assert updated.profile_json == b'{"tier":"platinum"}'
 
         subscription = await client.create_subscription(
@@ -498,6 +511,7 @@ def test_http_client_requests_and_encoding() -> None:
 
         users = await client.list_node_logged_in_users(token, 4096)
         assert [user.username for user in users] == ["alice", "bob"]
+        assert [user.login_name for user in users] == ["alice.login", ""]
 
         blocked = await client.block_user(
             token,
@@ -533,6 +547,31 @@ def test_http_client_requests_and_encoding() -> None:
 
         await client.close()
         await inner.aclose()
+
+    asyncio.run(main())
+
+
+def test_http_client_login_supports_login_name_selector() -> None:
+    async def main() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8")) if request.content else None
+            assert request.method == "POST"
+            assert request.url.path == "/auth/login"
+            assert body is not None
+            assert body["login_name"] == "alice.login"
+            assert "node_id" not in body
+            assert "user_id" not in body
+            assert bcrypt.checkpw(b"alice-password", body["password"].encode("utf-8"))
+            return httpx.Response(200, json={"token": "login-name-token"})
+
+        inner = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = AsyncHTTPClient("http://turntf.test", client=inner)
+        try:
+            token = await client.login(login_name="alice.login", password="alice-password")
+            assert token == "login-name-token"
+        finally:
+            await client.close()
+            await inner.aclose()
 
     asyncio.run(main())
 
@@ -575,6 +614,24 @@ def test_http_client_user_metadata_validation() -> None:
                 )
             except ValueError as exc:
                 assert "request.after must use the same prefix as request.prefix" in str(exc)
+            else:
+                raise AssertionError("expected validation error")
+        finally:
+            await client.close()
+            await inner.aclose()
+
+    asyncio.run(main())
+
+
+def test_http_client_login_rejects_mixed_selectors() -> None:
+    async def main() -> None:
+        inner = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+        client = AsyncHTTPClient("http://127.0.0.1:8080", client=inner)
+        try:
+            try:
+                await client.login(4096, 1, "root", login_name="alice.login")
+            except ValueError as exc:
+                assert "exactly one of (node_id,user_id) or login_name" in str(exc)
             else:
                 raise AssertionError("expected validation error")
         finally:

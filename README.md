@@ -94,6 +94,13 @@ pip install -e .[dev]
 
 `AsyncClient.login()` 只是复用内部 `AsyncHTTPClient` 调用 HTTP `/auth/login`，返回 Bearer token。它不会修改 `Config.credentials`，也不会把 token 注入后续 WebSocket RPC。`AsyncClient` 真正的连接身份始终由 `Config.credentials` 决定。
 
+HTTP 和 WebSocket 登录都支持双轨 selector：
+
+- 旧方式：`node_id + user_id + password`
+- 新方式：`login_name + password`
+
+两种 selector 必须二选一，`username` 不参与认证。
+
 ## 快速开始
 
 ### 只使用 `AsyncHTTPClient`
@@ -112,6 +119,7 @@ async def main() -> None:
             token,
             CreateUserRequest(
                 username="alice",
+                login_name="alice.login",
                 password=plain_password("alice-password"),
                 profile_json=b'{"tier":"gold"}',
                 role="user",
@@ -162,8 +170,7 @@ async def main() -> None:
         Config(
             base_url="http://127.0.0.1:8080",
             credentials=Credentials(
-                node_id=4096,
-                user_id=1025,
+                login_name="alice.login",
                 password=plain_password("alice-password"),
             ),
             cursor_store=MemoryCursorStore(),
@@ -204,7 +211,7 @@ asyncio.run(main())
 | 字段 | 默认值 | 说明 |
 | --- | --- | --- |
 | `base_url` | 无 | 必填，支持 `http://`、`https://`、`ws://`、`wss://` |
-| `credentials` | 无 | 必填，WebSocket 首帧登录使用的 `(node_id, user_id, password)` |
+| `credentials` | 无 | 必填，WebSocket 首帧登录使用 `(node_id, user_id, password)` 或 `(login_name, password)` |
 | `cursor_store` | `MemoryCursorStore()` | 消息持久化与游标存储；默认只适合测试和单进程调试 |
 | `handler` | `NopHandler()` | 登录、消息、瞬时包、错误、断线回调 |
 | `http_client` | `None` | 可注入复用的 `httpx.AsyncClient`；注入后由调用方负责关闭 |
