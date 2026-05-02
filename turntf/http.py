@@ -508,19 +508,33 @@ class AsyncHTTPClient:
         items = await self.list_attachments(token, subscriber, AttachmentType.CHANNEL_SUBSCRIPTION)
         return [subscription_from_http(_attachment_payload(item)) for item in items]
 
-    async def list_messages(self, token: str, target: UserRef, limit: int = 0) -> list[Message]:
+    async def list_messages(
+        self,
+        token: str,
+        target: UserRef,
+        limit: int = 0,
+        peer_node_id: int | str | None = None,
+        peer_user_id: int | str | None = None,
+    ) -> list[Message]:
         """列出指定用户的持久化消息。
 
         Args:
             token: 认证令牌。
-            target: 目标用户引用。
+            target: 目标用户引用（支持 0 作为 "当前用户" 的哨兵值）。
             limit: 返回消息的最大数量，0 表示使用服务器默认值。
+            peer_node_id: 可选的 peer 节点 ID，用于按会话过滤查询。
+            peer_user_id: 可选的 peer 用户 ID，用于按会话过滤查询。
 
         Returns:
             消息列表。
         """
-        validate_user_ref(target, "target")
-        query = f"?limit={limit}" if limit > 0 else ""
+        query_parts: list[str] = []
+        if limit > 0:
+            query_parts.append(f"limit={limit}")
+        if peer_node_id is not None and peer_user_id is not None:
+            query_parts.append(f"peer_node_id={peer_node_id}")
+            query_parts.append(f"peer_user_id={peer_user_id}")
+        query = f"?{'&'.join(query_parts)}" if query_parts else ""
         response = await self._do_json(
             "GET",
             f"/nodes/{target.node_id}/users/{target.user_id}/messages{query}",
