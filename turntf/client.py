@@ -87,28 +87,88 @@ from .validation import (
 
 
 class Handler:
+    """事件处理器基类。
+
+    定义 WebSocket 连接生命周期中的各类事件回调。
+    继承此类并重写相应方法来处理特定事件。
+
+    所有方法都是异步的，默认实现为空操作（no-op）。
+    """
+
     async def on_login(self, info: LoginInfo) -> None:
+        """登录成功后的回调。
+
+        Args:
+            info: 登录信息，包含用户信息、协议版本和会话引用。
+        """
         return None
 
     async def on_message(self, message: Message) -> None:
+        """收到持久化消息时的回调。
+
+        Args:
+            message: 接收到的 Message 对象。
+        """
         return None
 
     async def on_packet(self, packet: Packet) -> None:
+        """收到瞬时数据包时的回调。
+
+        Args:
+            packet: 接收到的 Packet 对象。
+        """
         return None
 
     async def on_error(self, error: BaseException) -> None:
+        """处理过程中发生错误时的回调。
+
+        Args:
+            error: 发生的异常对象。
+        """
         return None
 
     async def on_disconnect(self, error: BaseException) -> None:
+        """WebSocket 连接断开时的回调。
+
+        Args:
+            error: 导致断开连接的异常对象。
+        """
         return None
 
 
 class NopHandler(Handler):
+    """空的处理器实现。
+
+    继承自 Handler，但所有回调方法均为空操作。
+    当未提供自定义 Handler 时作为默认值使用。
+    """
     pass
 
 
 @dataclass(slots=True)
 class Config:
+    """AsyncClient 的配置项。
+
+    包含连接 turntf 服务器所需的全部配置参数。
+
+    Attributes:
+        base_url: 服务器基础 URL，如 ``http://localhost:8080``。
+        credentials: 登录凭据。
+        cursor_store: 游标存储实现，用于断线重连时恢复消息状态。
+                      默认为 MemoryCursorStore（内存存储）。
+        handler: 事件处理器，处理收到的消息和数据包。
+                 默认为 NopHandler（空操作）。
+        http_client: 可选的 httpx.AsyncClient 实例。不提供时自动创建。
+        reconnect: 是否启用自动重连，默认 True。
+        initial_reconnect_delay: 首次重连延迟（秒），默认 1.0。
+        max_reconnect_delay: 最大重连延迟（秒），默认 30.0。
+        ping_interval: WebSocket ping 发送间隔（秒），默认 30.0。
+        request_timeout: RPC 请求超时时间（秒），默认 10.0。
+        ack_messages: 是否自动确认消息，默认 True。
+                      启用后客户端会自动向服务器发送消息确认。
+        transient_only: 是否只接收瞬时消息，默认 False。
+        realtime_stream: 是否使用实时流式 WebSocket 端点，默认 False。
+    """
     base_url: str
     credentials: Credentials
     cursor_store: CursorStore | None = None
@@ -125,7 +185,42 @@ class Config:
 
 
 class AsyncClient:
+    """turntf WebSocket 异步客户端。
+
+    通过 WebSocket 协议与 turntf 服务器建立长连接，
+    支持发送和接收持久化消息和瞬时数据包。
+
+    使用方式：
+
+    .. code-block:: python
+
+        config = Config(
+            base_url="http://localhost:8080",
+            credentials=Credentials(
+                node_id=1,
+                user_id=100,
+                password=plain_password("my_password"),
+            ),
+        )
+        async with AsyncClient(config) as client:
+            await client.connect()
+            # 发送消息、接收推送等
+
+    客户端支持自动重连（可通过 Config 配置），
+    断线后会自动恢复消息推送状态。
+    """
+
     def __init__(self, config: Config) -> None:
+        """初始化 AsyncClient。
+
+        验证配置参数的有效性，包括 base_url 和 credentials。
+
+        Args:
+            config: 客户端配置对象。
+
+        Raises:
+            ValueError: 如果 base_url 为空或凭据参数无效。
+        """
         if config.base_url.strip() == "":
             raise ValueError("base_url is required")
         validate_login_selector(
@@ -168,22 +263,45 @@ class AsyncClient:
 
     @property
     def http(self) -> AsyncHTTPClient:
+        """获取 HTTP API 客户端。
+
+        用于执行需要认证令牌的 HTTP REST 操作。
+
+        Returns:
+            AsyncHTTPClient 实例。
+        """
         return self._http
 
     @property
     def login_info(self) -> LoginInfo | None:
+        """获取登录成功后的信息。
+
+        Returns:
+            如果已成功登录则返回 LoginInfo，否则返回 None。
+        """
         return self._login_info
 
     @property
     def session_ref(self) -> SessionRef | None:
+        """获取当前会话引用。
+
+        Returns:
+            如果已成功登录则返回当前会话的 SessionRef，否则返回 None。
+        """
         if self._login_info is None:
             return None
         return self._login_info.session_ref
 
     async def __aenter__(self) -> "AsyncClient":
+        """异步上下文管理器入口。
+
+        Returns:
+            AsyncClient 实例自身。
+        """
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+        """异步上下文管理器出口，自动关闭客户端。"""
         await self.close()
 
     async def login(
@@ -194,6 +312,19 @@ class AsyncClient:
         *,
         login_name: str | None = None,
     ) -> str:
+        """使用 HTTP API 和明文密码登录，获取认证令牌。
+
+        这是一个便捷方法，内部调用 login_with_password。
+
+        Args:
+            node_id: 节点 ID（与 login_name 二选一）。
+            user_id: 用户 ID（与 login_name 二选一）。
+            password: 明文密码。
+            login_name: 登录名（与 node_id/user_id 二选一）。
+
+        Returns:
+            认证令牌（JWT token）字符串。
+        """
         return await self._http.login(
             node_id=node_id,
             user_id=user_id,
@@ -209,6 +340,17 @@ class AsyncClient:
         *,
         login_name: str | None = None,
     ) -> str:
+        """使用 HTTP API 和 PasswordInput 密码对象登录，获取认证令牌。
+
+        Args:
+            node_id: 节点 ID（与 login_name 二选一）。
+            user_id: 用户 ID（与 login_name 二选一）。
+            password: PasswordInput 密码输入对象。
+            login_name: 登录名（与 node_id/user_id 二选一）。
+
+        Returns:
+            认证令牌（JWT token）字符串。
+        """
         return await self._http.login_with_password(
             node_id=node_id,
             user_id=user_id,
@@ -217,6 +359,16 @@ class AsyncClient:
         )
 
     async def connect(self) -> None:
+        """建立 WebSocket 连接并登录。
+
+        首次调用时启动后台运行循环，建立 WebSocket 连接
+        并发送登录请求进行身份验证。
+
+        支持自动重连：如果连接断开且配置允许，会以指数退避策略重试。
+
+        Raises:
+            ClosedError: 如果客户端已关闭。
+        """
         if self._closed:
             raise ClosedError()
         if self._connected and self._ws is not None:
@@ -229,6 +381,14 @@ class AsyncClient:
         await self._first_connect
 
     async def close(self) -> None:
+        """关闭客户端，断开 WebSocket 连接并释放资源。
+
+        执行清理操作：
+        1. 标记客户端为已关闭
+        2. 关闭 WebSocket 连接
+        3. 取消所有待处理的 RPC 请求
+        4. 关闭 HTTP 客户端
+        """
         if self._closed:
             await self._await_run_task()
             await self._http.close()
@@ -248,9 +408,29 @@ class AsyncClient:
         await self._http.close()
 
     async def ping(self) -> None:
+        """发送 WebSocket ping 心跳请求。
+
+        用于保持连接活跃或检测连接是否正常。
+        内部通过 RPC 机制发送 ping 并等待 pong 响应。
+        """
         await self._rpc(lambda request_id: pb.ClientEnvelope(ping=pb.Ping(request_id=request_id)))
 
     async def send_message(self, target: UserRef, body: bytes) -> Message:
+        """发送持久化消息。
+
+        消息会被服务器持久化存储，并通过 WebSocket 推送给目标用户。
+
+        Args:
+            target: 目标用户引用。
+            body: 消息体字节数据。
+
+        Returns:
+            已发送的消息对象，包含服务器分配的元数据（node_id, seq 等）。
+
+        Raises:
+            ValueError: 如果 target 无效或 body 为空。
+            NotConnectedError: 如果未连接到服务器。
+        """
         validate_user_ref(target, "target")
         if len(body) == 0:
             raise ValueError("body is required")
@@ -269,6 +449,15 @@ class AsyncClient:
         return result
 
     async def post_message(self, target: UserRef, body: bytes) -> Message:
+        """发送持久化消息（``send_message`` 的别名）。
+
+        Args:
+            target: 目标用户引用。
+            body: 消息体字节数据。
+
+        Returns:
+            已发送的消息对象。
+        """
         return await self.send_message(target, body)
 
     async def send_packet(
@@ -279,6 +468,24 @@ class AsyncClient:
         *,
         target_session: SessionRef | None = None,
     ) -> RelayAccepted:
+        """发送瞬时数据包（非持久化消息）。
+
+        数据包不会被持久化存储，适用于实时通信场景。
+        如果目标用户离线，数据包可能会丢失。
+
+        Args:
+            target: 目标用户引用。
+            body: 数据包体字节数据。
+            delivery_mode: 投递模式（BEST_EFFORT 或 ROUTE_RETRY）。
+            target_session: 可选的目与会话引用，指定后只投递到该会话。
+
+        Returns:
+            中继确认信息，表示服务器已接受并开始转发电。
+
+        Raises:
+            ValueError: 如果参数无效。
+            NotConnectedError: 如果未连接到服务器。
+        """
         validate_user_ref(target, "target")
         if len(body) == 0:
             raise ValueError("body is required")
@@ -311,6 +518,17 @@ class AsyncClient:
         *,
         target_session: SessionRef | None = None,
     ) -> RelayAccepted:
+        """发送瞬时数据包（``send_packet`` 的别名）。
+
+        Args:
+            target: 目标用户引用。
+            body: 数据包体字节数据。
+            delivery_mode: 投递模式。
+            target_session: 可选的目与会话引用。
+
+        Returns:
+            中继确认信息。
+        """
         return await self.send_packet(
             target,
             body,
@@ -319,6 +537,19 @@ class AsyncClient:
         )
 
     async def create_user(self, request: CreateUserRequest) -> User:
+        """创建新用户。
+
+        通过 WebSocket 在服务器上创建一个新用户。
+
+        Args:
+            request: 创建用户的请求参数（用户名和角色为必填）。
+
+        Returns:
+            创建成功的 User 对象。
+
+        Raises:
+            ValueError: 如果 username 或 role 为空。
+        """
         if request.username == "":
             raise ValueError("username is required")
         if request.role == "":
@@ -340,6 +571,16 @@ class AsyncClient:
         return result
 
     async def create_channel(self, request: CreateUserRequest) -> User:
+        """创建频道（以用户形式）。
+
+        频道本质上用户的一种特殊类型，角色默认为 "channel"。
+
+        Args:
+            request: 创建频道的请求参数。
+
+        Returns:
+            创建成功的 User 对象（角色为 "channel"）。
+        """
         role = request.role or "channel"
         return await self.create_user(
             CreateUserRequest(
@@ -352,6 +593,14 @@ class AsyncClient:
         )
 
     async def get_user(self, target: UserRef) -> User:
+        """获取用户信息。
+
+        Args:
+            target: 目标用户的引用标识。
+
+        Returns:
+            用户的详细信息。
+        """
         validate_user_ref(target, "target")
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
@@ -363,6 +612,17 @@ class AsyncClient:
         return result
 
     async def update_user(self, target: UserRef, request: UpdateUserRequest) -> User:
+        """更新用户信息。
+
+        只更新请求中设置了值的字段。
+
+        Args:
+            target: 目标用户的引用标识。
+            request: 包含要更新字段的请求参数。
+
+        Returns:
+            更新后的 User 对象。
+        """
         validate_user_ref(target, "target")
 
         def build(request_id: int) -> pb.ClientEnvelope:
@@ -385,6 +645,14 @@ class AsyncClient:
         return result
 
     async def delete_user(self, target: UserRef) -> DeleteUserResult:
+        """删除用户。
+
+        Args:
+            target: 要删除的目标用户引用。
+
+        Returns:
+            删除操作的结果。
+        """
         validate_user_ref(target, "target")
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
@@ -396,6 +664,18 @@ class AsyncClient:
         return result
 
     async def get_user_metadata(self, owner: UserRef, key: str) -> UserMetadata:
+        """获取指定用户的元数据。
+
+        Args:
+            owner: 元数据所有者的用户引用。
+            key: 元数据键名。
+
+        Returns:
+            用户元数据。
+
+        Raises:
+            ValueError: 如果 owner 或 key 无效。
+        """
         validate_user_ref(owner, "owner")
         validate_user_metadata_key(key, "key")
         result = await self._rpc(
@@ -417,6 +697,21 @@ class AsyncClient:
         key: str,
         request: UpsertUserMetadataRequest,
     ) -> UserMetadata:
+        """创建或更新用户元数据。
+
+        如果指定键的元数据已存在则更新，不存在则创建。
+
+        Args:
+            owner: 元数据所有者的用户引用。
+            key: 元数据键名。
+            request: 包含 value 和可选的 expires_at。
+
+        Returns:
+            创建或更新后的用户元数据。
+
+        Raises:
+            ValueError: 如果 owner、key 或 request.value 无效。
+        """
         validate_user_ref(owner, "owner")
         validate_user_metadata_key(key, "key")
         if request.value is None:
@@ -439,6 +734,15 @@ class AsyncClient:
         return result
 
     async def delete_user_metadata(self, owner: UserRef, key: str) -> UserMetadata:
+        """删除用户元数据。
+
+        Args:
+            owner: 元数据所有者的用户引用。
+            key: 要删除的元数据键名。
+
+        Returns:
+            被删除的用户元数据。
+        """
         validate_user_ref(owner, "owner")
         validate_user_metadata_key(key, "key")
         result = await self._rpc(
@@ -459,6 +763,17 @@ class AsyncClient:
         owner: UserRef,
         request: ScanUserMetadataRequest | None = None,
     ) -> UserMetadataScanResult:
+        """扫描用户元数据。
+
+        支持按前缀过滤和分页扫描。
+
+        Args:
+            owner: 元数据所有者的用户引用。
+            request: 扫描请求参数。为 None 时使用默认值（扫描全部）。
+
+        Returns:
+            扫描结果，包含元数据项列表和下一页游标。
+        """
         validate_user_ref(owner, "owner")
         if request is None:
             request = ScanUserMetadataRequest()
@@ -485,6 +800,19 @@ class AsyncClient:
         attachment_type: AttachmentType,
         config_json: bytes = b"{}",
     ) -> Attachment:
+        """创建或更新用户附件关系。
+
+        附件关系表示两个用户之间的关联（如频道订阅、黑名单等）。
+
+        Args:
+            owner: 附件所有者用户引用。
+            subject: 附件目标用户引用。
+            attachment_type: 附件关系类型。
+            config_json: 配置信息的 JSON 字节数据，默认 ``b"{}"``。
+
+        Returns:
+            创建或更新后的附件关系。
+        """
         validate_user_ref(owner, "owner")
         validate_user_ref(subject, "subject")
         result = await self._rpc(
@@ -508,6 +836,16 @@ class AsyncClient:
         subject: UserRef,
         attachment_type: AttachmentType,
     ) -> Attachment:
+        """删除用户附件关系。
+
+        Args:
+            owner: 附件所有者用户引用。
+            subject: 附件目标用户引用。
+            attachment_type: 附件关系类型。
+
+        Returns:
+            被删除的附件关系。
+        """
         validate_user_ref(owner, "owner")
         validate_user_ref(subject, "subject")
         result = await self._rpc(
@@ -529,6 +867,15 @@ class AsyncClient:
         owner: UserRef,
         attachment_type: AttachmentType | None = None,
     ) -> list[Attachment]:
+        """列出用户的所有附件关系。
+
+        Args:
+            owner: 附件所有者用户引用。
+            attachment_type: 可选的附件类型过滤，None 时返回所有类型。
+
+        Returns:
+            附件关系列表。
+        """
         validate_user_ref(owner, "owner")
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
@@ -546,6 +893,15 @@ class AsyncClient:
         return result
 
     async def subscribe_channel(self, subscriber: UserRef, channel: UserRef) -> Subscription:
+        """订阅频道。
+
+        Args:
+            subscriber: 订阅者用户引用。
+            channel: 要订阅的频道用户引用。
+
+        Returns:
+            创建的订阅关系。
+        """
         attachment = await self.upsert_attachment(
             subscriber,
             channel,
@@ -561,9 +917,27 @@ class AsyncClient:
         )
 
     async def create_subscription(self, subscriber: UserRef, channel: UserRef) -> Subscription:
+        """创建频道订阅（``subscribe_channel`` 的别名）。
+
+        Args:
+            subscriber: 订阅者用户引用。
+            channel: 要订阅的频道用户引用。
+
+        Returns:
+            创建的订阅关系。
+        """
         return await self.subscribe_channel(subscriber, channel)
 
     async def unsubscribe_channel(self, subscriber: UserRef, channel: UserRef) -> Subscription:
+        """取消频道订阅。
+
+        Args:
+            subscriber: 订阅者用户引用。
+            channel: 要取消订阅的频道用户引用。
+
+        Returns:
+            被取消的订阅关系。
+        """
         attachment = await self.delete_attachment(
             subscriber,
             channel,
@@ -578,6 +952,14 @@ class AsyncClient:
         )
 
     async def list_subscriptions(self, subscriber: UserRef) -> list[Subscription]:
+        """列出用户的所有频道订阅。
+
+        Args:
+            subscriber: 订阅者用户引用。
+
+        Returns:
+            用户的所有订阅关系列表。
+        """
         items = await self.list_attachments(subscriber, AttachmentType.CHANNEL_SUBSCRIPTION)
         return [
             Subscription(
@@ -591,6 +973,15 @@ class AsyncClient:
         ]
 
     async def block_user(self, owner: UserRef, blocked: UserRef) -> BlacklistEntry:
+        """将用户加入黑名单。
+
+        Args:
+            owner: 黑名单所有者用户引用。
+            blocked: 要被拉黑的用户引用。
+
+        Returns:
+            创建的黑名单条目。
+        """
         attachment = await self.upsert_attachment(
             owner,
             blocked,
@@ -606,6 +997,15 @@ class AsyncClient:
         )
 
     async def unblock_user(self, owner: UserRef, blocked: UserRef) -> BlacklistEntry:
+        """将用户移出黑名单。
+
+        Args:
+            owner: 黑名单所有者用户引用。
+            blocked: 要被移出黑名单的用户引用。
+
+        Returns:
+            被移除的黑名单条目。
+        """
         attachment = await self.delete_attachment(
             owner,
             blocked,
@@ -620,6 +1020,14 @@ class AsyncClient:
         )
 
     async def list_blocked_users(self, owner: UserRef) -> list[BlacklistEntry]:
+        """列出用户黑名单中的所有条目。
+
+        Args:
+            owner: 黑名单所有者用户引用。
+
+        Returns:
+            黑名单条目列表。
+        """
         items = await self.list_attachments(owner, AttachmentType.USER_BLACKLIST)
         return [
             BlacklistEntry(
@@ -633,6 +1041,15 @@ class AsyncClient:
         ]
 
     async def list_messages(self, target: UserRef, limit: int = 0) -> list[Message]:
+        """列出指定用户的持久化消息。
+
+        Args:
+            target: 目标用户引用。
+            limit: 返回消息的最大数量，0 表示使用服务器默认值。
+
+        Returns:
+            消息列表。
+        """
         validate_user_ref(target, "target")
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
@@ -648,6 +1065,17 @@ class AsyncClient:
         return result
 
     async def list_events(self, after: int = 0, limit: int = 0) -> list[Event]:
+        """列出领域事件。
+
+        支持按序列号偏移和数量限制进行分页查询。
+
+        Args:
+            after: 起始事件序列号（包含），0 表示从最早开始。
+            limit: 返回事件的最大数量，0 表示使用服务器默认值。
+
+        Returns:
+            事件列表。
+        """
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
                 list_events=pb.ListEventsRequest(request_id=request_id, after=after, limit=limit)
@@ -658,6 +1086,11 @@ class AsyncClient:
         return result
 
     async def list_cluster_nodes(self) -> list[ClusterNode]:
+        """列出集群中的所有节点。
+
+        Returns:
+            集群节点列表。
+        """
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
                 list_cluster_nodes=pb.ListClusterNodesRequest(request_id=request_id)
@@ -668,6 +1101,14 @@ class AsyncClient:
         return result
 
     async def list_node_logged_in_users(self, node_id: int) -> list[LoggedInUser]:
+        """列出指定节点上当前登录的所有用户。
+
+        Args:
+            node_id: 节点 ID。
+
+        Returns:
+            已登录用户列表。
+        """
         validate_positive_int(node_id, "node_id")
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
@@ -682,6 +1123,16 @@ class AsyncClient:
         return result
 
     async def resolve_user_sessions(self, user: UserRef) -> ResolvedUserSessions:
+        """解析用户的所有在线会话。
+
+        返回指定用户在各节点上的在线状态和详细会话信息。
+
+        Args:
+            user: 目标用户引用。
+
+        Returns:
+            包含在线节点分布和会话列表的解析结果。
+        """
         validate_user_ref(user, "user")
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
@@ -696,6 +1147,13 @@ class AsyncClient:
         return result
 
     async def operations_status(self) -> OperationsStatus:
+        """获取节点运行状态。
+
+        包含消息窗口大小、事件序列号、写入门控状态、节点对等信息。
+
+        Returns:
+            节点的当前运行状态。
+        """
         result = await self._rpc(
             lambda request_id: pb.ClientEnvelope(
                 operations_status=pb.OperationsStatusRequest(request_id=request_id)
@@ -706,6 +1164,11 @@ class AsyncClient:
         return result
 
     async def metrics(self) -> str:
+        """获取服务器指标信息。
+
+        Returns:
+            指标信息的纯文本内容。
+        """
         result = await self._rpc(lambda request_id: pb.ClientEnvelope(metrics=pb.MetricsRequest(request_id=request_id)))
         if not isinstance(result, str):
             raise ProtocolError("missing text in metrics_response")
@@ -1104,6 +1567,24 @@ class AsyncClient:
 
 
 def websocket_url(base: str, realtime: bool) -> str:
+    """从 HTTP 基础 URL 生成 WebSocket 连接 URL。
+
+    将 ``http://`` 转换为 ``ws://``，将 ``https://`` 转换为 ``wss://``，
+    并根据 realtime 参数选择不同的 WebSocket 端点路径。
+
+    普通客户端连接路径为 ``/ws/client``，
+    实时流连接路径为 ``/ws/realtime``。
+
+    Args:
+        base: HTTP 基础 URL，如 ``http://localhost:8080``。
+        realtime: 是否为实时流连接。
+
+    Returns:
+        可用于 WebSocket 连接的 URL 字符串。
+
+    Raises:
+        ValueError: 如果 base URL 的 scheme 不受支持。
+    """
     parsed = urlparse(base)
     scheme = parsed.scheme
     if scheme == "http":

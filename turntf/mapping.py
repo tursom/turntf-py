@@ -38,6 +38,14 @@ from .types import (
 
 
 def delivery_mode_to_proto(mode: DeliveryMode) -> int:
+    """将 DeliveryMode 枚举转换为 protobuf 枚举值。
+
+    Args:
+        mode: DeliveryMode 枚举值。
+
+    Returns:
+        对应的 protobuf 整型枚举值。
+    """
     if mode == DeliveryMode.BEST_EFFORT:
         return pb.CLIENT_DELIVERY_MODE_BEST_EFFORT
     if mode == DeliveryMode.ROUTE_RETRY:
@@ -46,6 +54,14 @@ def delivery_mode_to_proto(mode: DeliveryMode) -> int:
 
 
 def delivery_mode_from_proto(mode: int) -> DeliveryMode:
+    """将 protobuf 枚举值转换为 DeliveryMode 枚举。
+
+    Args:
+        mode: protobuf 传递模式整型值。
+
+    Returns:
+        对应的 DeliveryMode 枚举值。
+    """
     if mode == pb.CLIENT_DELIVERY_MODE_BEST_EFFORT:
         return DeliveryMode.BEST_EFFORT
     if mode == pb.CLIENT_DELIVERY_MODE_ROUTE_RETRY:
@@ -54,6 +70,14 @@ def delivery_mode_from_proto(mode: int) -> DeliveryMode:
 
 
 def attachment_type_to_proto(attachment_type: AttachmentType) -> int:
+    """将 AttachmentType 枚举转换为 protobuf 枚举值。
+
+    Args:
+        attachment_type: AttachmentType 枚举值。
+
+    Returns:
+        对应的 protobuf 整型枚举值。
+    """
     if attachment_type == AttachmentType.CHANNEL_MANAGER:
         return pb.ATTACHMENT_TYPE_CHANNEL_MANAGER
     if attachment_type == AttachmentType.CHANNEL_WRITER:
@@ -66,6 +90,17 @@ def attachment_type_to_proto(attachment_type: AttachmentType) -> int:
 
 
 def attachment_type_from_proto(attachment_type: int) -> AttachmentType:
+    """将 protobuf 枚举值转换为 AttachmentType 枚举。
+
+    Args:
+        attachment_type: protobuf 附件类型整型值。
+
+    Returns:
+        对应的 AttachmentType 枚举值。
+
+    Raises:
+        ProtocolError: 如果不支持的附件类型值。
+    """
     if attachment_type == pb.ATTACHMENT_TYPE_CHANNEL_MANAGER:
         return AttachmentType.CHANNEL_MANAGER
     if attachment_type == pb.ATTACHMENT_TYPE_CHANNEL_WRITER:
@@ -78,30 +113,81 @@ def attachment_type_from_proto(attachment_type: int) -> AttachmentType:
 
 
 def user_ref_to_proto(ref: UserRef) -> pb.UserRef:
+    """将 UserRef 对象转换为 protobuf 消息。
+
+    Args:
+        ref: UserRef 对象。
+
+    Returns:
+        protobuf UserRef 消息。
+    """
     return pb.UserRef(node_id=ref.node_id, user_id=ref.user_id)
 
 
 def session_ref_to_proto(ref: SessionRef) -> pb.SessionRef:
+    """将 SessionRef 对象转换为 protobuf 消息。
+
+    Args:
+        ref: SessionRef 对象。
+
+    Returns:
+        protobuf SessionRef 消息。
+    """
     return pb.SessionRef(serving_node_id=ref.serving_node_id, session_id=ref.session_id)
 
 
 def cursor_to_proto(cursor: MessageCursor) -> pb.MessageCursor:
+    """将 MessageCursor 对象转换为 protobuf 消息。
+
+    Args:
+        cursor: MessageCursor 对象。
+
+    Returns:
+        protobuf MessageCursor 消息。
+    """
     return pb.MessageCursor(node_id=cursor.node_id, seq=cursor.seq)
 
 
 def cursor_from_proto(cursor: pb.MessageCursor | None) -> MessageCursor:
+    """将 protobuf 消息转换为 MessageCursor 对象。
+
+    Args:
+        cursor: protobuf MessageCursor 消息，可能为 None。
+
+    Returns:
+        MessageCursor 对象，如果输入为 None 则返回空游标 (0, 0)。
+    """
     if cursor is None:
         return MessageCursor(node_id=0, seq=0)
     return MessageCursor(node_id=cursor.node_id, seq=cursor.seq)
 
 
 def user_ref_from_proto(ref: pb.UserRef | None) -> UserRef:
+    """将 protobuf 消息转换为 UserRef 对象。
+
+    Args:
+        ref: protobuf UserRef 消息，可能为 None。
+
+    Returns:
+        UserRef 对象，如果输入为 None 则返回 (0, 0)。
+    """
     if ref is None:
         return UserRef(node_id=0, user_id=0)
     return UserRef(node_id=ref.node_id, user_id=ref.user_id)
 
 
 def session_ref_from_proto(ref: pb.SessionRef | None) -> SessionRef:
+    """将 protobuf 消息转换为 SessionRef 对象。
+
+    Args:
+        ref: protobuf SessionRef 消息，可能为 None。
+
+    Returns:
+        SessionRef 对象。
+
+    Raises:
+        ProtocolError: 如果 ref 为 None 或内容无效。
+    """
     if ref is None:
         raise ProtocolError("missing session_ref")
     if ref.serving_node_id <= 0 or ref.session_id.strip() == "":
@@ -110,6 +196,17 @@ def session_ref_from_proto(ref: pb.SessionRef | None) -> SessionRef:
 
 
 def user_from_proto(user: pb.User | None) -> User:
+    """将 protobuf 消息转换为 User 对象。
+
+    Args:
+        user: protobuf User 消息，可能为 None。
+
+    Returns:
+        User 对象。
+
+    Raises:
+        ProtocolError: 如果 user 为 None。
+    """
     if user is None:
         raise ProtocolError("missing user")
     return User(
@@ -127,6 +224,17 @@ def user_from_proto(user: pb.User | None) -> User:
 
 
 def user_metadata_from_proto(metadata: pb.UserMetadata | None) -> UserMetadata:
+    """将 protobuf 消息转换为 UserMetadata 对象。
+
+    Args:
+        metadata: protobuf UserMetadata 消息，可能为 None。
+
+    Returns:
+        UserMetadata 对象。
+
+    Raises:
+        ProtocolError: 如果 metadata 为 None。
+    """
     if metadata is None:
         raise ProtocolError("missing user_metadata")
     return UserMetadata(
@@ -141,6 +249,17 @@ def user_metadata_from_proto(metadata: pb.UserMetadata | None) -> UserMetadata:
 
 
 def message_from_proto(message: pb.Message | None) -> Message:
+    """将 protobuf 消息转换为 Message 对象。
+
+    Args:
+        message: protobuf Message 消息，可能为 None。
+
+    Returns:
+        Message 对象。
+
+    Raises:
+        ProtocolError: 如果 message 为 None。
+    """
     if message is None:
         raise ProtocolError("missing message")
     return Message(
@@ -154,6 +273,17 @@ def message_from_proto(message: pb.Message | None) -> Message:
 
 
 def packet_from_proto(packet: pb.Packet | None) -> Packet:
+    """将 protobuf 消息转换为 Packet 对象。
+
+    Args:
+        packet: protobuf Packet 消息，可能为 None。
+
+    Returns:
+        Packet 对象。
+
+    Raises:
+        ProtocolError: 如果 packet 为 None。
+    """
     if packet is None:
         raise ProtocolError("missing packet")
     return Packet(
@@ -171,6 +301,17 @@ def packet_from_proto(packet: pb.Packet | None) -> Packet:
 
 
 def relay_accepted_from_proto(accepted: pb.TransientAccepted | None) -> RelayAccepted:
+    """将 protobuf 消息转换为 RelayAccepted 对象。
+
+    Args:
+        accepted: protobuf TransientAccepted 消息，可能为 None。
+
+    Returns:
+        RelayAccepted 对象。
+
+    Raises:
+        ProtocolError: 如果 accepted 为 None。
+    """
     if accepted is None:
         raise ProtocolError("missing transient_accepted")
     return RelayAccepted(
@@ -186,6 +327,17 @@ def relay_accepted_from_proto(accepted: pb.TransientAccepted | None) -> RelayAcc
 
 
 def attachment_from_proto(attachment: pb.Attachment | None) -> Attachment:
+    """将 protobuf 消息转换为 Attachment 对象。
+
+    Args:
+        attachment: protobuf Attachment 消息，可能为 None。
+
+    Returns:
+        Attachment 对象。
+
+    Raises:
+        ProtocolError: 如果 attachment 为 None。
+    """
     if attachment is None:
         raise ProtocolError("missing attachment")
     return Attachment(
@@ -200,6 +352,14 @@ def attachment_from_proto(attachment: pb.Attachment | None) -> Attachment:
 
 
 def subscription_from_attachment(attachment: Attachment) -> Subscription:
+    """从 Attachment 对象创建 Subscription 对象。
+
+    Args:
+        attachment: Attachment 对象（必须是频道订阅类型的附件）。
+
+    Returns:
+        从 Attachment 转换得到的 Subscription 对象。
+    """
     return Subscription(
         subscriber=attachment.owner,
         channel=attachment.subject,
@@ -210,6 +370,14 @@ def subscription_from_attachment(attachment: Attachment) -> Subscription:
 
 
 def blacklist_entry_from_attachment(attachment: Attachment) -> BlacklistEntry:
+    """从 Attachment 对象创建 BlacklistEntry 对象。
+
+    Args:
+        attachment: Attachment 对象（必须是黑名单类型的附件）。
+
+    Returns:
+        从 Attachment 转换得到的 BlacklistEntry 对象。
+    """
     return BlacklistEntry(
         owner=attachment.owner,
         blocked=attachment.subject,
@@ -220,14 +388,41 @@ def blacklist_entry_from_attachment(attachment: Attachment) -> BlacklistEntry:
 
 
 def subscription_from_proto(subscription: pb.Attachment | None) -> Subscription:
+    """从 protobuf Attachment 消息创建 Subscription 对象。
+
+    Args:
+        subscription: protobuf Attachment 消息，可能为 None。
+
+    Returns:
+        Subscription 对象。
+    """
     return subscription_from_attachment(attachment_from_proto(subscription))
 
 
 def blacklist_entry_from_proto(entry: pb.Attachment | None) -> BlacklistEntry:
+    """从 protobuf Attachment 消息创建 BlacklistEntry 对象。
+
+    Args:
+        entry: protobuf Attachment 消息，可能为 None。
+
+    Returns:
+        BlacklistEntry 对象。
+    """
     return blacklist_entry_from_attachment(attachment_from_proto(entry))
 
 
 def event_from_proto(event: pb.Event | None) -> Event:
+    """将 protobuf 消息转换为 Event 对象。
+
+    Args:
+        event: protobuf Event 消息，可能为 None。
+
+    Returns:
+        Event 对象。
+
+    Raises:
+        ProtocolError: 如果 event 为 None。
+    """
     if event is None:
         raise ProtocolError("missing event")
     return Event(
@@ -244,6 +439,17 @@ def event_from_proto(event: pb.Event | None) -> Event:
 
 
 def cluster_node_from_proto(node: pb.ClusterNode | None) -> ClusterNode:
+    """将 protobuf 消息转换为 ClusterNode 对象。
+
+    Args:
+        node: protobuf ClusterNode 消息，可能为 None。
+
+    Returns:
+        ClusterNode 对象。
+
+    Raises:
+        ProtocolError: 如果 node 为 None。
+    """
     if node is None:
         raise ProtocolError("missing cluster node")
     return ClusterNode(
@@ -255,6 +461,17 @@ def cluster_node_from_proto(node: pb.ClusterNode | None) -> ClusterNode:
 
 
 def logged_in_user_from_proto(user: pb.LoggedInUser | None) -> LoggedInUser:
+    """将 protobuf 消息转换为 LoggedInUser 对象。
+
+    Args:
+        user: protobuf LoggedInUser 消息，可能为 None。
+
+    Returns:
+        LoggedInUser 对象。
+
+    Raises:
+        ProtocolError: 如果 user 为 None。
+    """
     if user is None:
         raise ProtocolError("missing logged-in user")
     return LoggedInUser(
@@ -266,6 +483,17 @@ def logged_in_user_from_proto(user: pb.LoggedInUser | None) -> LoggedInUser:
 
 
 def online_node_presence_from_proto(presence: pb.OnlineNodePresence | None) -> OnlineNodePresence:
+    """将 protobuf 消息转换为 OnlineNodePresence 对象。
+
+    Args:
+        presence: protobuf OnlineNodePresence 消息，可能为 None。
+
+    Returns:
+        OnlineNodePresence 对象。
+
+    Raises:
+        ProtocolError: 如果 presence 为 None。
+    """
     if presence is None:
         raise ProtocolError("missing online node presence")
     return OnlineNodePresence(
@@ -276,6 +504,17 @@ def online_node_presence_from_proto(presence: pb.OnlineNodePresence | None) -> O
 
 
 def resolved_session_from_proto(session: pb.ResolvedSession | None) -> ResolvedSession:
+    """将 protobuf 消息转换为 ResolvedSession 对象。
+
+    Args:
+        session: protobuf ResolvedSession 消息，可能为 None。
+
+    Returns:
+        ResolvedSession 对象。
+
+    Raises:
+        ProtocolError: 如果 session 为 None 或缺少会话引用。
+    """
     if session is None:
         raise ProtocolError("missing resolved session")
     if not session.HasField("session"):
@@ -290,6 +529,17 @@ def resolved_session_from_proto(session: pb.ResolvedSession | None) -> ResolvedS
 def resolved_user_sessions_from_proto(
     response: pb.ResolveUserSessionsResponse | None,
 ) -> ResolvedUserSessions:
+    """将 protobuf 响应消息转换为 ResolvedUserSessions 对象。
+
+    Args:
+        response: protobuf ResolveUserSessionsResponse 消息，可能为 None。
+
+    Returns:
+        ResolvedUserSessions 对象。
+
+    Raises:
+        ProtocolError: 如果 response 为 None。
+    """
     if response is None:
         raise ProtocolError("missing resolve_user_sessions_response")
     return ResolvedUserSessions(
@@ -300,6 +550,17 @@ def resolved_user_sessions_from_proto(
 
 
 def operations_status_from_proto(status: pb.OperationsStatus | None) -> OperationsStatus:
+    """将 protobuf 消息转换为 OperationsStatus 对象。
+
+    Args:
+        status: protobuf OperationsStatus 消息，可能为 None。
+
+    Returns:
+        OperationsStatus 对象。
+
+    Raises:
+        ProtocolError: 如果 status 为 None。
+    """
     if status is None:
         raise ProtocolError("missing operations status")
     return OperationsStatus(
@@ -318,24 +579,56 @@ def operations_status_from_proto(status: pb.OperationsStatus | None) -> Operatio
 
 
 def message_trim_status_from_proto(status: pb.MessageTrimStatus | None) -> MessageTrimStatus:
+    """将 protobuf 消息转换为 MessageTrimStatus 对象。
+
+    Args:
+        status: protobuf MessageTrimStatus 消息，可能为 None。
+
+    Returns:
+        MessageTrimStatus 对象，如果输入为 None 则返回零值。
+    """
     if status is None:
         return MessageTrimStatus(trimmed_total=0, last_trimmed_at="")
     return MessageTrimStatus(trimmed_total=status.trimmed_total, last_trimmed_at=status.last_trimmed_at)
 
 
 def event_log_trim_status_from_proto(status: pb.EventLogTrimStatus | None) -> EventLogTrimStatus:
+    """将 protobuf 消息转换为 EventLogTrimStatus 对象。
+
+    Args:
+        status: protobuf EventLogTrimStatus 消息，可能为 None。
+
+    Returns:
+        EventLogTrimStatus 对象，如果输入为 None 则返回零值。
+    """
     if status is None:
         return EventLogTrimStatus(trimmed_total=0, last_trimmed_at="")
     return EventLogTrimStatus(trimmed_total=status.trimmed_total, last_trimmed_at=status.last_trimmed_at)
 
 
 def projection_status_from_proto(status: pb.ProjectionStatus | None) -> ProjectionStatus:
+    """将 protobuf 消息转换为 ProjectionStatus 对象。
+
+    Args:
+        status: protobuf ProjectionStatus 消息，可能为 None。
+
+    Returns:
+        ProjectionStatus 对象，如果输入为 None 则返回零值。
+    """
     if status is None:
         return ProjectionStatus(pending_total=0, last_failed_at="")
     return ProjectionStatus(pending_total=status.pending_total, last_failed_at=status.last_failed_at)
 
 
 def peer_origin_status_from_proto(status: pb.PeerOriginStatus | None) -> PeerOriginStatus:
+    """将 protobuf 消息转换为 PeerOriginStatus 对象。
+
+    Args:
+        status: protobuf PeerOriginStatus 消息，可能为 None。
+
+    Returns:
+        PeerOriginStatus 对象，如果输入为 None 则返回零值。
+    """
     if status is None:
         return PeerOriginStatus(
             origin_node_id=0,
@@ -358,6 +651,14 @@ def peer_origin_status_from_proto(status: pb.PeerOriginStatus | None) -> PeerOri
 
 
 def peer_status_from_proto(status: pb.PeerStatus | None) -> PeerStatus:
+    """将 protobuf 消息转换为 PeerStatus 对象。
+
+    Args:
+        status: protobuf PeerStatus 消息，可能为 None。
+
+    Returns:
+        PeerStatus 对象，如果输入为 None 则返回零值。
+    """
     if status is None:
         return PeerStatus(
             node_id=0,
@@ -398,36 +699,103 @@ def peer_status_from_proto(status: pb.PeerStatus | None) -> PeerStatus:
 
 
 def messages_from_proto(items: list[pb.Message]) -> list[Message]:
+    """批量将 protobuf Message 列表转换为 Message 对象列表。
+
+    Args:
+        items: protobuf Message 消息列表。
+
+    Returns:
+        Message 对象列表。
+    """
     return [message_from_proto(item) for item in items]
 
 
 def attachments_from_proto(items: list[pb.Attachment]) -> list[Attachment]:
+    """批量将 protobuf Attachment 列表转换为 Attachment 对象列表。
+
+    Args:
+        items: protobuf Attachment 消息列表。
+
+    Returns:
+        Attachment 对象列表。
+    """
     return [attachment_from_proto(item) for item in items]
 
 
 def subscriptions_from_proto(items: list[pb.Attachment]) -> list[Subscription]:
+    """批量将 protobuf Attachment 列表转换为 Subscription 对象列表。
+
+    Args:
+        items: protobuf Attachment 消息列表。
+
+    Returns:
+        Subscription 对象列表。
+    """
     return [subscription_from_proto(item) for item in items]
 
 
 def blacklist_entries_from_proto(items: list[pb.Attachment]) -> list[BlacklistEntry]:
+    """批量将 protobuf Attachment 列表转换为 BlacklistEntry 对象列表。
+
+    Args:
+        items: protobuf Attachment 消息列表。
+
+    Returns:
+        BlacklistEntry 对象列表。
+    """
     return [blacklist_entry_from_proto(item) for item in items]
 
 
 def events_from_proto(items: list[pb.Event]) -> list[Event]:
+    """批量将 protobuf Event 列表转换为 Event 对象列表。
+
+    Args:
+        items: protobuf Event 消息列表。
+
+    Returns:
+        Event 对象列表。
+    """
     return [event_from_proto(item) for item in items]
 
 
 def cluster_nodes_from_proto(items: list[pb.ClusterNode]) -> list[ClusterNode]:
+    """批量将 protobuf ClusterNode 列表转换为 ClusterNode 对象列表。
+
+    Args:
+        items: protobuf ClusterNode 消息列表。
+
+    Returns:
+        ClusterNode 对象列表。
+    """
     return [cluster_node_from_proto(item) for item in items]
 
 
 def logged_in_users_from_proto(items: list[pb.LoggedInUser]) -> list[LoggedInUser]:
+    """批量将 protobuf LoggedInUser 列表转换为 LoggedInUser 对象列表。
+
+    Args:
+        items: protobuf LoggedInUser 消息列表。
+
+    Returns:
+        LoggedInUser 对象列表。
+    """
     return [logged_in_user_from_proto(item) for item in items]
 
 
 def user_metadata_scan_result_from_proto(
     response: pb.ScanUserMetadataResponse | None,
 ) -> UserMetadataScanResult:
+    """将 protobuf 扫描响应转换为 UserMetadataScanResult 对象。
+
+    Args:
+        response: protobuf ScanUserMetadataResponse 消息，可能为 None。
+
+    Returns:
+        UserMetadataScanResult 对象。
+
+    Raises:
+        ProtocolError: 如果 response 为 None。
+    """
     if response is None:
         raise ProtocolError("missing scan_user_metadata_response")
     return UserMetadataScanResult(
@@ -438,20 +806,52 @@ def user_metadata_scan_result_from_proto(
 
 
 def online_presence_from_proto(items: list[pb.OnlineNodePresence]) -> list[OnlineNodePresence]:
+    """批量将 protobuf OnlineNodePresence 列表转换为 OnlineNodePresence 对象列表。
+
+    Args:
+        items: protobuf OnlineNodePresence 消息列表。
+
+    Returns:
+        OnlineNodePresence 对象列表。
+    """
     return [online_node_presence_from_proto(item) for item in items]
 
 
 def resolved_sessions_from_proto(items: list[pb.ResolvedSession]) -> list[ResolvedSession]:
+    """批量将 protobuf ResolvedSession 列表转换为 ResolvedSession 对象列表。
+
+    Args:
+        items: protobuf ResolvedSession 消息列表。
+
+    Returns:
+        ResolvedSession 对象列表。
+    """
     return [resolved_session_from_proto(item) for item in items]
 
 
 def user_ref_from_http(data: dict[str, Any] | None) -> UserRef:
+    """从 HTTP JSON 字典解析 UserRef 对象。
+
+    Args:
+        data: 包含 ``node_id`` 和 ``user_id``（或 ``id``）的字典。
+
+    Returns:
+        UserRef 对象，如果输入不是字典则返回 (0, 0)。
+    """
     if not isinstance(data, dict):
         return UserRef(node_id=0, user_id=0)
     return UserRef(node_id=_int_value(data.get("node_id")), user_id=_int_value(data.get("user_id") or data.get("id")))
 
 
 def session_ref_from_http(data: dict[str, Any] | None) -> SessionRef | None:
+    """从 HTTP JSON 字典解析 SessionRef 对象。
+
+    Args:
+        data: 包含 ``serving_node_id`` 和 ``session_id`` 的字典。
+
+    Returns:
+        SessionRef 对象，如果数据无效则返回 None。
+    """
     if not isinstance(data, dict):
         return None
     serving_node_id = _int_value(data.get("serving_node_id"))
@@ -462,6 +862,14 @@ def session_ref_from_http(data: dict[str, Any] | None) -> SessionRef | None:
 
 
 def user_from_http(data: dict[str, Any]) -> User:
+    """从 HTTP JSON 字典解析 User 对象。
+
+    Args:
+        data: 用户信息的 JSON 字典。
+
+    Returns:
+        User 对象。
+    """
     profile = data.get("profile")
     if profile is None and "profile_json" in data:
         profile = data.get("profile_json")
@@ -480,6 +888,14 @@ def user_from_http(data: dict[str, Any]) -> User:
 
 
 def user_metadata_from_http(data: dict[str, Any]) -> UserMetadata:
+    """从 HTTP JSON 字典解析 UserMetadata 对象。
+
+    Args:
+        data: 元数据的 JSON 字典。
+
+    Returns:
+        UserMetadata 对象。
+    """
     return UserMetadata(
         owner=user_ref_from_http(data.get("owner")),
         key=_str_value(data.get("key")),
@@ -492,6 +908,17 @@ def user_metadata_from_http(data: dict[str, Any]) -> UserMetadata:
 
 
 def user_metadata_scan_result_from_http(data: dict[str, Any]) -> UserMetadataScanResult:
+    """从 HTTP JSON 字典解析 UserMetadataScanResult 对象。
+
+    Args:
+        data: 元数据扫描结果的 JSON 字典。
+
+    Returns:
+        UserMetadataScanResult 对象。
+
+    Raises:
+        ProtocolError: 如果响应中缺少 items 字段或格式不正确。
+    """
     items_value = data.get("items")
     if not isinstance(items_value, list):
         raise ProtocolError("missing items in scan_user_metadata response")
@@ -509,6 +936,14 @@ def user_metadata_scan_result_from_http(data: dict[str, Any]) -> UserMetadataSca
 
 
 def message_from_http(data: dict[str, Any]) -> Message:
+    """从 HTTP JSON 字典解析 Message 对象。
+
+    Args:
+        data: 消息的 JSON 字典。
+
+    Returns:
+        Message 对象。
+    """
     created_at_hlc = _str_value(data.get("created_at_hlc"))
     if created_at_hlc == "":
         created_at_hlc = _str_value(data.get("created_at"))
@@ -523,6 +958,14 @@ def message_from_http(data: dict[str, Any]) -> Message:
 
 
 def relay_accepted_from_http(data: dict[str, Any]) -> RelayAccepted:
+    """从 HTTP JSON 字典解析 RelayAccepted 对象。
+
+    Args:
+        data: 中继确认的 JSON 字典。
+
+    Returns:
+        RelayAccepted 对象。
+    """
     return RelayAccepted(
         packet_id=_int_value(data.get("packet_id")),
         source_node_id=_int_value(data.get("source_node_id")),
@@ -534,6 +977,14 @@ def relay_accepted_from_http(data: dict[str, Any]) -> RelayAccepted:
 
 
 def attachment_from_http(data: dict[str, Any]) -> Attachment:
+    """从 HTTP JSON 字典解析 Attachment 对象。
+
+    Args:
+        data: 附件的 JSON 字典。
+
+    Returns:
+        Attachment 对象。
+    """
     attachment_type = _str_value(data.get("attachment_type"))
     return Attachment(
         owner=user_ref_from_http(data.get("owner")),
@@ -547,14 +998,38 @@ def attachment_from_http(data: dict[str, Any]) -> Attachment:
 
 
 def subscription_from_http(data: dict[str, Any]) -> Subscription:
+    """从 HTTP JSON 字典解析 Subscription 对象。
+
+    Args:
+        data: 订阅信息的 JSON 字典。
+
+    Returns:
+        Subscription 对象。
+    """
     return subscription_from_attachment(attachment_from_http(data))
 
 
 def blacklist_entry_from_http(data: dict[str, Any]) -> BlacklistEntry:
+    """从 HTTP JSON 字典解析 BlacklistEntry 对象。
+
+    Args:
+        data: 黑名单条目的 JSON 字典。
+
+    Returns:
+        BlacklistEntry 对象。
+    """
     return blacklist_entry_from_attachment(attachment_from_http(data))
 
 
 def event_from_http(data: dict[str, Any]) -> Event:
+    """从 HTTP JSON 字典解析 Event 对象。
+
+    Args:
+        data: 事件信息的 JSON 字典。
+
+    Returns:
+        Event 对象。
+    """
     event_value = data.get("event")
     if event_value is None and "event_json" in data:
         event_value = data.get("event_json")
@@ -572,6 +1047,14 @@ def event_from_http(data: dict[str, Any]) -> Event:
 
 
 def cluster_node_from_http(data: dict[str, Any]) -> ClusterNode:
+    """从 HTTP JSON 字典解析 ClusterNode 对象。
+
+    Args:
+        data: 集群节点信息的 JSON 字典。
+
+    Returns:
+        ClusterNode 对象。
+    """
     return ClusterNode(
         node_id=_int_value(data.get("node_id")),
         is_local=bool(data.get("is_local", False)),
@@ -581,6 +1064,14 @@ def cluster_node_from_http(data: dict[str, Any]) -> ClusterNode:
 
 
 def logged_in_user_from_http(data: dict[str, Any]) -> LoggedInUser:
+    """从 HTTP JSON 字典解析 LoggedInUser 对象。
+
+    Args:
+        data: 已登录用户信息的 JSON 字典。
+
+    Returns:
+        LoggedInUser 对象。
+    """
     return LoggedInUser(
         node_id=_int_value(data.get("node_id")),
         user_id=_int_value(data.get("user_id")),
@@ -590,6 +1081,14 @@ def logged_in_user_from_http(data: dict[str, Any]) -> LoggedInUser:
 
 
 def operations_status_from_http(data: dict[str, Any]) -> OperationsStatus:
+    """从 HTTP JSON 字典解析 OperationsStatus 对象。
+
+    Args:
+        data: 运行状态信息的 JSON 字典。
+
+    Returns:
+        OperationsStatus 对象。
+    """
     return OperationsStatus(
         node_id=_int_value(data.get("node_id")),
         message_window_size=_int_value(data.get("message_window_size")),
@@ -606,6 +1105,14 @@ def operations_status_from_http(data: dict[str, Any]) -> OperationsStatus:
 
 
 def message_trim_status_from_http(data: Any) -> MessageTrimStatus:
+    """从 HTTP JSON 数据解析 MessageTrimStatus 对象。
+
+    Args:
+        data: 消息修剪状态的 JSON 数据。
+
+    Returns:
+        MessageTrimStatus 对象，如果输入不是字典则返回零值。
+    """
     if not isinstance(data, dict):
         return MessageTrimStatus(trimmed_total=0, last_trimmed_at="")
     return MessageTrimStatus(
@@ -615,6 +1122,14 @@ def message_trim_status_from_http(data: Any) -> MessageTrimStatus:
 
 
 def event_log_trim_status_from_http(data: Any) -> EventLogTrimStatus:
+    """从 HTTP JSON 数据解析 EventLogTrimStatus 对象。
+
+    Args:
+        data: 事件日志修剪状态的 JSON 数据。
+
+    Returns:
+        EventLogTrimStatus 对象，如果输入不是字典则返回零值。
+    """
     if not isinstance(data, dict):
         return EventLogTrimStatus(trimmed_total=0, last_trimmed_at="")
     return EventLogTrimStatus(
@@ -624,6 +1139,14 @@ def event_log_trim_status_from_http(data: Any) -> EventLogTrimStatus:
 
 
 def projection_status_from_http(data: Any) -> ProjectionStatus:
+    """从 HTTP JSON 数据解析 ProjectionStatus 对象。
+
+    Args:
+        data: 投影处理状态的 JSON 数据。
+
+    Returns:
+        ProjectionStatus 对象，如果输入不是字典则返回零值。
+    """
     if not isinstance(data, dict):
         return ProjectionStatus(pending_total=0, last_failed_at="")
     return ProjectionStatus(
@@ -633,6 +1156,14 @@ def projection_status_from_http(data: Any) -> ProjectionStatus:
 
 
 def peer_origin_status_from_http(data: Any) -> PeerOriginStatus:
+    """从 HTTP JSON 数据解析 PeerOriginStatus 对象。
+
+    Args:
+        data: 对等节点来源状态的 JSON 数据。
+
+    Returns:
+        PeerOriginStatus 对象，如果输入不是字典则返回零值。
+    """
     if not isinstance(data, dict):
         return PeerOriginStatus(
             origin_node_id=0,
@@ -655,6 +1186,14 @@ def peer_origin_status_from_http(data: Any) -> PeerOriginStatus:
 
 
 def peer_status_from_http(data: Any) -> PeerStatus:
+    """从 HTTP JSON 数据解析 PeerStatus 对象。
+
+    Args:
+        data: 对等节点状态的 JSON 数据。
+
+    Returns:
+        PeerStatus 对象，如果输入不是字典则返回零值。
+    """
     if not isinstance(data, dict):
         return PeerStatus(
             node_id=0,
@@ -695,6 +1234,14 @@ def peer_status_from_http(data: Any) -> PeerStatus:
 
 
 def delete_user_result_from_http(data: dict[str, Any]) -> DeleteUserResult:
+    """从 HTTP JSON 字典解析 DeleteUserResult 对象。
+
+    Args:
+        data: 删除用户操作结果的 JSON 字典。
+
+    Returns:
+        DeleteUserResult 对象。
+    """
     user = data.get("user")
     if isinstance(user, dict):
         ref = user_ref_from_http(user)
