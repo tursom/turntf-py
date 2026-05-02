@@ -26,6 +26,8 @@ from .types import (
     PeerStatus,
     ProjectionStatus,
     RelayAccepted,
+    RelayEnvelope,
+    RelayKind,
     ResolvedSession,
     ResolvedUserSessions,
     SessionRef,
@@ -1291,3 +1293,228 @@ def _str_value(value: Any) -> str:
 
 def _list_value(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+# --- Relay 协议手动 Protobuf 序列化 ---
+# 由于 relay.proto 引用 client.proto 且 protoc 不可用，
+# 实现兼容的手动 Protobuf Wire Format 编码/解码。
+
+
+def _encode_varint(value: int) -> bytes:
+    """编码无符号整数为 Protobuf varint。"""
+    buf = bytearray()
+    value = value & 0xFFFFFFFFFFFFFFFF
+    while value > 0x7F:
+        buf.append((value & 0x7F) | 0x80)
+        value >>= 7
+    buf.append(value & 0x7F)
+    return bytes(buf)
+
+
+def _decode_varint(data: bytes, offset: int) -> tuple[int, int]:
+    """解码 Protobuf varint，返回 (value, new_offset)。"""
+    value = 0
+    shift = 0
+    while True:
+        if offset >= len(data):
+            raise ValueError("truncated varint")
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        if not (byte & 0x80):
+            return value, offset
+        shift += 7
+        if shift >= 64:
+            raise ValueError("varint too long")
+
+
+def _encode_tag(field_number: int, wire_type: int) -> bytes:
+    """编码 Protobuf 字段 tag。"""
+    return _encode_varint((field_number << 3) | wire_type)
+
+
+def _skip_field(data: bytes, offset: int, wire_type: int) -> int:
+    """跳过当前字段，返回新的 offset。"""
+    if wire_type == 0:  # varint
+        _, offset = _decode_varint(data, offset)
+    elif wire_type == 1:  # 64-bit
+        offset += 8
+    elif wire_type == 2:  # length-delimited
+        length, offset = _decode_varint(data, offset)
+        offset += length
+    elif wire_type == 5:  # 32-bit
+        offset += 4
+    else:
+        raise ValueError(f"unsupported wire type {wire_type} in skip")
+    return offset
+
+
+_RELAY_SESSION_EMPTY = SessionRef(serving_node_id=0, session_id="")
+
+
+def _encode_session_ref(ref: SessionRef) -> bytes:
+    """编码 SessionRef 为 Protobuf 消息字节。"""
+    if ref.serving_node_id == 0 and not ref.session_id:
+        return b""
+    buf = bytearray()
+    if ref.serving_node_id != 0:
+        buf.extend(_encode_tag(1, 0))
+        buf.extend(_encode_varint(ref.serving_node_id))
+    if ref.session_id:
+        sid_bytes = ref.session_id.encode("utf-8")
+        buf.extend(_encode_tag(2, 2))
+        buf.extend(_encode_varint(len(sid_bytes)))
+        buf.extend(sid_bytes)
+    return bytes(buf)
+
+
+def _decode_session_ref(data: bytes, offset: int) -> tuple[SessionRef, int]:
+    """解码 Protobuf 字节为 SessionRef。"""
+    serving_node_id = 0
+    session_id = ""
+    while offset < len(data):
+        tag, offset = _decode_varint(data, offset)
+        field = tag >> 3
+        wire = tag & 0x7
+        if field == 1 and wire == 0:
+            raw, offset = _decode_varint(data, offset)
+            # 符号扩展 int64
+            serving_node_id = raw if raw < 0x8000000000000000 else raw - 0x10000000000000000
+        elif field == 2 and wire == 2:
+            length, offset = _decode_varint(data, offset)
+            if offset + length > len(data):
+                raise ValueError("truncated SessionRef session_id")
+            session_id = data[offset:offset + length].decode("utf-8")
+            offset += length
+        else:
+            offset = _skip_field(data, offset, wire)
+    return SessionRef(serving_node_id=serving_node_id, session_id=session_id), offset
+
+
+def encode_relay_envelope(env: RelayEnvelope) -> bytes:
+    """将 RelayEnvelope 编码为 Protobuf 字节序列。
+
+    Args:
+        env: 待编码的 RelayEnvelope 对象。
+
+    Returns:
+        编码后的 Protobuf 字节序列。
+    """
+    buf = bytearray()
+
+    if env.relay_id:
+        rid_bytes = env.relay_id.encode("utf-8")
+        buf.extend(_encode_tag(1, 2))
+        buf.extend(_encode_varint(len(rid_bytes)))
+        buf.extend(rid_bytes)
+
+    if env.kind != RelayKind.UNSPECIFIED:
+        buf.extend(_encode_tag(2, 0))
+        buf.extend(_encode_varint(env.kind.value))
+
+    if env.sender_session != _RELAY_SESSION_EMPTY:
+        sender_bytes = _encode_session_ref(env.sender_session)
+        buf.extend(_encode_tag(3, 2))
+        buf.extend(_encode_varint(len(sender_bytes)))
+        buf.extend(sender_bytes)
+
+    if env.target_session != _RELAY_SESSION_EMPTY:
+        target_bytes = _encode_session_ref(env.target_session)
+        buf.extend(_encode_tag(4, 2))
+        buf.extend(_encode_varint(len(target_bytes)))
+        buf.extend(target_bytes)
+
+    if env.seq != 0:
+        buf.extend(_encode_tag(5, 0))
+        buf.extend(_encode_varint(env.seq))
+
+    if env.ack_seq != 0:
+        buf.extend(_encode_tag(6, 0))
+        buf.extend(_encode_varint(env.ack_seq))
+
+    if env.payload:
+        buf.extend(_encode_tag(7, 2))
+        buf.extend(_encode_varint(len(env.payload)))
+        buf.extend(env.payload)
+
+    if env.sent_at_ms != 0:
+        buf.extend(_encode_tag(8, 0))
+        buf.extend(_encode_varint(env.sent_at_ms))
+
+    return bytes(buf)
+
+
+def decode_relay_envelope(data: bytes) -> RelayEnvelope:
+    """从 Protobuf 字节序列解码 RelayEnvelope。
+
+    Args:
+        data: 编码后的 Protobuf 字节序列。
+
+    Returns:
+        解码后的 RelayEnvelope 对象。
+
+    Raises:
+        ProtocolError: 如果数据格式无效。
+    """
+    relay_id = ""
+    kind = RelayKind.UNSPECIFIED
+    sender_session = SessionRef(serving_node_id=0, session_id="")
+    target_session = SessionRef(serving_node_id=0, session_id="")
+    seq = 0
+    ack_seq = 0
+    payload = b""
+    sent_at_ms = 0
+
+    offset = 0
+    try:
+        while offset < len(data):
+            tag, offset = _decode_varint(data, offset)
+            field = tag >> 3
+            wire = tag & 0x7
+
+            if field == 1 and wire == 2:
+                length, offset = _decode_varint(data, offset)
+                if offset + length > len(data):
+                    raise ValueError("truncated relay_id")
+                relay_id = data[offset:offset + length].decode("utf-8")
+                offset += length
+            elif field == 2 and wire == 0:
+                raw, offset = _decode_varint(data, offset)
+                kind = RelayKind(raw)
+            elif field == 3 and wire == 2:
+                length, offset = _decode_varint(data, offset)
+                sender_session, _ = _decode_session_ref(data[offset:offset + length], 0)
+                offset += length
+            elif field == 4 and wire == 2:
+                length, offset = _decode_varint(data, offset)
+                target_session, _ = _decode_session_ref(data[offset:offset + length], 0)
+                offset += length
+            elif field == 5 and wire == 0:
+                seq, offset = _decode_varint(data, offset)
+            elif field == 6 and wire == 0:
+                ack_seq, offset = _decode_varint(data, offset)
+            elif field == 7 and wire == 2:
+                length, offset = _decode_varint(data, offset)
+                if offset + length > len(data):
+                    raise ValueError("truncated payload")
+                payload = data[offset:offset + length]
+                offset += length
+            elif field == 8 and wire == 0:
+                raw, offset = _decode_varint(data, offset)
+                # 符号扩展 int64
+                sent_at_ms = raw if raw < 0x8000000000000000 else raw - 0x10000000000000000
+            else:
+                offset = _skip_field(data, offset, wire)
+    except (ValueError, IndexError, UnicodeDecodeError) as exc:
+        raise ProtocolError(f"invalid relay envelope: {exc}") from exc
+
+    return RelayEnvelope(
+        relay_id=relay_id,
+        kind=kind,
+        sender_session=sender_session,
+        target_session=target_session,
+        seq=seq,
+        ack_seq=ack_seq,
+        payload=payload,
+        sent_at_ms=sent_at_ms,
+    )

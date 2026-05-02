@@ -47,6 +47,7 @@ from .mapping import (
     user_ref_to_proto,
 )
 from .password import PasswordInput, plain_password
+from .relay import Relay
 from .store import CursorStore, MemoryCursorStore
 from .types import (
     Attachment,
@@ -260,6 +261,7 @@ class AsyncClient:
         self._connected = False
         self._login_info: LoginInfo | None = None
         self._stop_reconnect = False
+        self._relay: Relay | None = None
 
     @property
     def http(self) -> AsyncHTTPClient:
@@ -291,6 +293,16 @@ class AsyncClient:
         if self._login_info is None:
             return None
         return self._login_info.session_ref
+
+    def relay(self) -> Relay:
+        """获取关联的 Relay 管理器（懒初始化）。
+
+        Returns:
+            Relay 管理器实例。
+        """
+        if self._relay is None:
+            self._relay = Relay(self)
+        return self._relay
 
     async def __aenter__(self) -> "AsyncClient":
         """异步上下文管理器入口。
@@ -1306,7 +1318,12 @@ class AsyncClient:
             await self._safe_handler_call(self._cfg.handler.on_message, msg)
             return
         if body == "packet_pushed":
-            await self._safe_handler_call(self._cfg.handler.on_packet, packet_from_proto(env.packet_pushed.packet))
+            packet = packet_from_proto(env.packet_pushed.packet)
+            if self._relay is not None:
+                handled = await self._relay.handle_packet(packet)
+                if handled:
+                    return
+            await self._safe_handler_call(self._cfg.handler.on_packet, packet)
             return
         if body == "send_message_response":
             response = env.send_message_response

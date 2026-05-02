@@ -102,3 +102,20 @@ class ConnectionError(TurntfError):
         self.op = op
         self.cause = cause
         super().__init__(f"turntf connection error during {op}: {cause}")
+
+
+class RelayError(TurntfError):
+    """Relay 层错误异常。
+
+    当 Relay 连接发生协议或传输错误时抛出。
+    包含错误码和错误描述信息。
+
+    Attributes:
+        code: 错误码字符串标识。
+        message: 错误的详细描述。
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"relay: {code}: {message}")

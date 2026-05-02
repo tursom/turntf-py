@@ -5,11 +5,13 @@ from .errors import (
     DisconnectedError,
     NotConnectedError,
     ProtocolError,
+    RelayError,
     ServerError,
     TurntfError,
 )
 from .http import AsyncHTTPClient
 from .password import PasswordInput, hash_password, hashed_password, plain_password
+from .relay import Relay, RelayConnection
 from .store import CursorStore, MemoryCursorStore
 from .types import (
     Attachment,
@@ -34,6 +36,11 @@ from .types import (
     PeerStatus,
     ProjectionStatus,
     RelayAccepted,
+    RelayConfig,
+    RelayEnvelope,
+    RelayKind,
+    RelayState,
+    Reliability,
     ResolvedSession,
     ResolvedUserSessions,
     ScanUserMetadataRequest,
@@ -82,7 +89,15 @@ __all__ = [
     "PeerStatus",
     "ProjectionStatus",
     "ProtocolError",
+    "Relay",
     "RelayAccepted",
+    "RelayConfig",
+    "RelayConnection",
+    "RelayEnvelope",
+    "RelayError",
+    "RelayKind",
+    "RelayState",
+    "Reliability",
     "ResolvedSession",
     "ResolvedUserSessions",
     "ScanUserMetadataRequest",

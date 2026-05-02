@@ -705,3 +705,109 @@ class ScanUserMetadataRequest:
     prefix: str = ""
     after: str = ""
     limit: int = 0
+
+
+class Reliability(Enum):
+    """Relay 连接可靠性等级。
+
+    控制 RelayConnection 的数据传输保证级别。
+
+    - ``BEST_EFFORT``: 无 ACK，无重传，无去重，无排序。延迟最低，适合实时音视频帧。
+    - ``AT_LEAST_ONCE``: ACK + 重传，不保证去重和排序。适合幂等指令。
+    - ``RELIABLE_ORDERED``: ACK + 重传 + 去重 + 严格有序。适合文件传输和聊天消息。
+    """
+    BEST_EFFORT = 0
+    AT_LEAST_ONCE = 1
+    RELIABLE_ORDERED = 2
+
+
+class RelayState(Enum):
+    """RelayConnection 的当前状态。
+
+    - ``CLOSED``: 初始状态或已关闭。
+    - ``OPENING``: 已发送 OPEN，等待 OPEN_ACK。
+    - ``OPEN``: 连接已建立，可收发数据。
+    - ``CLOSING``: 已发送 CLOSE，等待确认。
+    """
+    CLOSED = 0
+    OPENING = 1
+    OPEN = 2
+    CLOSING = 3
+
+
+class RelayKind(Enum):
+    """Relay 协议帧的类型枚举，对应 proto RelayKind。
+
+    - ``UNSPECIFIED``: 未指定。
+    - ``OPEN``: 打开连接请求。
+    - ``OPEN_ACK``: 打开连接确认。
+    - ``DATA``: 数据帧。
+    - ``ACK``: 确认帧。
+    - ``CLOSE``: 关闭连接。
+    - ``PING``: 心跳探测。
+    - ``ERROR``: 错误通知。
+    """
+    UNSPECIFIED = 0
+    OPEN = 1
+    OPEN_ACK = 2
+    DATA = 3
+    ACK = 4
+    CLOSE = 5
+    PING = 6
+    ERROR = 7
+
+
+@dataclass(slots=True)
+class RelayConfig:
+    """RelayConnection 的配置。
+
+    Attributes:
+        reliability: 可靠性等级，默认 ``Reliability.RELIABLE_ORDERED``。
+        window_size: 发送窗口大小（在途未确认帧数上限），范围 1-256，默认 16。
+                     BestEffort 模式下忽略此配置。
+        open_timeout_ms: OPEN 等待 OPEN_ACK 超时毫秒数，默认 10000。
+        close_timeout_ms: CLOSE 等待确认超时毫秒数，默认 5000。
+        ack_timeout_ms: DATA 等待 ACK 超时毫秒数，默认 3000。
+                        BestEffort 模式下忽略此配置。
+        max_retransmits: 最大重传次数，默认 5。BestEffort 模式下忽略此配置。
+        idle_timeout_ms: 无数据超时断开毫秒数，0 表示不超时。
+        send_buffer_size: 发送缓冲区字节数，默认 65536。
+        send_timeout_ms: Send 操作超时毫秒数（缓冲区满时等待上限），0 表示不超时。
+        receive_timeout_ms: Receive 操作超时毫秒数（无数据等待上限），0 表示不超时。
+        delivery_mode: Packet 投递模式，默认 ``DeliveryMode.ROUTE_RETRY``。
+    """
+    reliability: Reliability = Reliability.RELIABLE_ORDERED
+    window_size: int = 16
+    open_timeout_ms: int = 10000
+    close_timeout_ms: int = 5000
+    ack_timeout_ms: int = 3000
+    max_retransmits: int = 5
+    idle_timeout_ms: int = 0
+    send_buffer_size: int = 65536
+    send_timeout_ms: int = 0
+    receive_timeout_ms: int = 0
+    delivery_mode: DeliveryMode = DeliveryMode.ROUTE_RETRY
+
+
+@dataclass(slots=True)
+class RelayEnvelope:
+    """Relay 协议的帧类型，与 proto RelayEnvelope 对应。
+
+    Attributes:
+        relay_id: 连接的唯一标识。
+        kind: 帧类型。
+        sender_session: 发送方会话引用。
+        target_session: 目标方会话引用。
+        seq: 序列号（用于可靠传输）。
+        ack_seq: 确认序列号（累积 ACK）。
+        payload: 帧负载数据。
+        sent_at_ms: 发送时间戳（毫秒）。
+    """
+    relay_id: str = ""
+    kind: RelayKind = RelayKind.UNSPECIFIED
+    sender_session: SessionRef = field(default_factory=lambda: SessionRef(serving_node_id=0, session_id=""))
+    target_session: SessionRef = field(default_factory=lambda: SessionRef(serving_node_id=0, session_id=""))
+    seq: int = 0
+    ack_seq: int = 0
+    payload: bytes = b""
+    sent_at_ms: int = 0
