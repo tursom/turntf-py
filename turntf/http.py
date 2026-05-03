@@ -51,6 +51,7 @@ from .validation import (
     validate_delivery_mode,
     validate_login_selector,
     normalize_list_users_request,
+    resolve_user_metadata_upsert_value,
     validate_positive_int,
     validate_user_metadata_key,
     validate_user_metadata_scan_request,
@@ -264,7 +265,9 @@ class AsyncHTTPClient:
         """列出当前用户可通讯的活跃用户。
 
         支持按名称子串和精确 uid 组合过滤。普通用户看到其他联系人时，
-        服务端可能会把 ``login_name`` 脱敏为空字符串。
+        服务端可能会把 ``login_name`` 脱敏为空字符串；若目标用户或频道写入
+        ``system.visible_to_others=false``，普通用户的列表结果里也可能看不到它。
+        该列表只反映“当前可见的候选对象”，不表示知道 uid 后一定不能继续发消息。
 
         Args:
             token: 认证令牌。
@@ -368,7 +371,7 @@ class AsyncHTTPClient:
 
         Args:
             token: 认证令牌。
-            owner: 元数据所有者的用户引用。
+            owner: 元数据所有者的用户引用。owner 可以是普通用户，也可以是 channel。
             key: 元数据键名。
 
         Returns:
@@ -398,20 +401,17 @@ class AsyncHTTPClient:
 
         Args:
             token: 认证令牌。
-            owner: 元数据所有者的用户引用。
+            owner: 元数据所有者的用户引用。owner 可以是普通用户，也可以是 channel。
             key: 元数据键名。
-            request: 包含 value 和可选的 expires_at。
+            request: 包含 ``value`` 或 ``typed_value`` 二选一，以及可选的 expires_at。
 
         Returns:
             创建或更新后的用户元数据。
         """
         validate_user_ref(owner, "owner")
         validate_user_metadata_key(key, "key")
-        if request.value is None:
-            raise ValueError("request.value is required")
-        body: dict[str, Any] = {"value": base64.b64encode(request.value).decode("ascii")}
-        if request.expires_at is not None:
-            body["expires_at"] = request.expires_at
+        raw_value = resolve_user_metadata_upsert_value(request, key, "request")
+        body = _user_metadata_request_body(request, raw_value)
         response = await self._do_json(
             "PUT",
             f"/nodes/{owner.node_id}/users/{owner.user_id}/metadata/{quote(key, safe='')}",
@@ -426,7 +426,7 @@ class AsyncHTTPClient:
 
         Args:
             token: 认证令牌。
-            owner: 元数据所有者的用户引用。
+            owner: 元数据所有者的用户引用。owner 可以是普通用户，也可以是 channel。
             key: 要删除的元数据键名。
 
         Returns:
@@ -455,7 +455,7 @@ class AsyncHTTPClient:
 
         Args:
             token: 认证令牌。
-            owner: 元数据所有者的用户引用。
+            owner: 元数据所有者的用户引用。owner 可以是普通用户，也可以是 channel。
             request: 扫描请求参数，包含 prefix、after 和 limit。
 
         Returns:
@@ -892,7 +892,7 @@ class AsyncHTTPClient:
         method: str,
         path: str,
         token: str,
-        body: dict[str, Any] | None,
+        body: dict[str, Any] | str | None,
         statuses: set[int],
     ) -> Any:
         """发送 HTTP 请求并解析 JSON 响应。
@@ -901,7 +901,7 @@ class AsyncHTTPClient:
             method: HTTP 方法（如 "GET"、"POST"）。
             path: 请求路径。
             token: 认证令牌。
-            body: 请求体字典（可选）。
+            body: 请求体 JSON（字典或已序列化字符串，可选）。
             statuses: 期望的 HTTP 状态码集合。
 
         Returns:
@@ -938,7 +938,7 @@ class AsyncHTTPClient:
         method: str,
         path: str,
         token: str,
-        body: dict[str, Any] | None,
+        body: dict[str, Any] | str | None,
         statuses: Iterable[int],
     ) -> str:
         """执行 HTTP 请求并返回响应文本。
@@ -947,7 +947,7 @@ class AsyncHTTPClient:
             method: HTTP 方法。
             path: 请求路径。
             token: 认证令牌，为空字符串时不添加 Authorization 头。
-            body: 请求体字典（可选）。
+            body: 请求体 JSON（字典或已序列化字符串，可选）。
             statuses: 期望的 HTTP 状态码集合。
 
         Returns:
@@ -960,18 +960,44 @@ class AsyncHTTPClient:
         headers: dict[str, str] = {}
         if token != "":
             headers["Authorization"] = f"Bearer {token}"
+        request_kwargs: dict[str, Any] = {}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            if isinstance(body, str):
+                request_kwargs["content"] = body.encode("utf-8")
+            else:
+                request_kwargs["json"] = body
         try:
             response = await self._client.request(
                 method,
                 self.base_url + path,
                 headers=headers,
-                json=body,
+                **request_kwargs,
             )
         except httpx.HTTPError as exc:
             raise ConnectionError(f"{method} {path}", exc) from exc
         if response.status_code not in statuses:
             raise ProtocolError(f"unexpected HTTP status {response.status_code}: {response.text.strip()}")
         return response.text
+
+
+def _user_metadata_request_body(
+    request: UpsertUserMetadataRequest,
+    raw_value: bytes,
+) -> dict[str, Any] | str:
+    if request.typed_value is None:
+        body: dict[str, Any] = {"value": base64.b64encode(raw_value).decode("ascii")}
+        if request.expires_at is not None:
+            body["expires_at"] = request.expires_at
+        return body
+
+    parts = [f'"typed_value":{request.typed_value.to_http_json()}']
+    if request.expires_at is not None:
+        parts.append(
+            '"expires_at":'
+            + json.dumps(request.expires_at, ensure_ascii=False, separators=(",", ":"))
+        )
+    return "{" + ",".join(parts) + "}"
 
 
 def _json_bytes_to_value(data: bytes, field: str) -> Any:

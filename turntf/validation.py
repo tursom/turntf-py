@@ -5,10 +5,13 @@ import re
 from .types import (
     DeliveryMode,
     ListUsersRequest,
+    MetadataTypedValue,
     Message,
     MessageCursor,
     ScanUserMetadataRequest,
     SessionRef,
+    UpsertUserMetadataRequest,
+    USER_METADATA_KEY_VISIBLE_TO_OTHERS,
     UserRef,
 )
 
@@ -211,6 +214,44 @@ def validate_user_metadata_scan_request(request: ScanUserMetadataRequest, field:
     validate_user_metadata_scan_limit(request.limit, f"{field}.limit")
     if request.prefix != "" and request.after != "" and not request.after.startswith(request.prefix):
         raise ValueError(f"{field}.after must use the same prefix as {field}.prefix")
+
+
+def resolve_user_metadata_upsert_value(
+    request: UpsertUserMetadataRequest,
+    key: str,
+    field: str = "request",
+) -> bytes:
+    """校验 metadata upsert 请求，并返回最终要落库的原始 bytes。"""
+    has_value = request.value is not None
+    has_typed_value = request.typed_value is not None
+    if has_value == has_typed_value:
+        raise ValueError(f"{field} must provide exactly one of value or typed_value")
+    if request.expires_at is not None and not isinstance(request.expires_at, str):
+        raise ValueError(f"{field}.expires_at must be a string")
+
+    if has_value:
+        if not isinstance(request.value, bytes):
+            raise ValueError(f"{field}.value must be bytes")
+        raw_value = request.value
+    else:
+        typed_value = request.typed_value
+        if not isinstance(typed_value, MetadataTypedValue):
+            raise ValueError(f"{field}.typed_value must be a MetadataTypedValue")
+        try:
+            raw_value = typed_value.to_raw_value()
+        except ValueError as exc:
+            raise ValueError(f"{field}.typed_value {exc}") from exc
+
+    if key == USER_METADATA_KEY_VISIBLE_TO_OTHERS:
+        typed_value = request.typed_value
+        if typed_value is not None and typed_value.normalized_kind() != "bool":
+            raise ValueError(f"{field}.typed_value.kind must be 'bool' for {USER_METADATA_KEY_VISIBLE_TO_OTHERS}")
+        if raw_value.strip() not in {b"true", b"false"}:
+            raise ValueError(f"{field} requires a boolean value for {USER_METADATA_KEY_VISIBLE_TO_OTHERS}")
+        if request.expires_at is not None and request.expires_at.strip() != "":
+            raise ValueError(f"{field}.expires_at is not supported for {USER_METADATA_KEY_VISIBLE_TO_OTHERS}")
+
+    return raw_value
 
 
 def validate_session_ref(ref: SessionRef, field: str = "session_ref") -> None:

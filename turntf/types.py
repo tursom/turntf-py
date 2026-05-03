@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 from .password import PasswordInput
+
+MetadataNumberValue = str | int | float
+MetadataJSONScalar = None | bool | int | float | str
+MetadataJSONValue = MetadataJSONScalar | list["MetadataJSONValue"] | dict[str, "MetadataJSONValue"]
+
+USER_METADATA_KEY_VISIBLE_TO_OTHERS = "system.visible_to_others"
 
 
 class DeliveryMode(str, Enum):
@@ -34,6 +43,163 @@ class AttachmentType(str, Enum):
     CHANNEL_WRITER = "channel_writer"
     CHANNEL_SUBSCRIPTION = "channel_subscription"
     USER_BLACKLIST = "user_blacklist"
+
+
+@dataclass(slots=True)
+class MetadataTypedValue:
+    """metadata 的 typed 视图。
+
+    HTTP metadata 请求可用该结构表达 typed_value，请求体会按 ``kind`` 选择对应字段。
+    响应侧当服务端或 SDK 能稳定解释原始 bytes 时，也会把 typed 视图填充到这里。
+
+    Attributes:
+        kind: 值类型，支持 ``bytes``、``bool``、``string``、``number``、``json``。
+        bytes_value: ``kind == "bytes"`` 时使用的原始字节值。
+        bool_value: ``kind == "bool"`` 时使用的布尔值。
+        string_value: ``kind == "string"`` 时使用的字符串值。
+        number_value: ``kind == "number"`` 时使用的 JSON number。
+        json_value: ``kind == "json"`` 时使用的 JSON 值。
+    """
+
+    kind: str
+    bytes_value: bytes | None = None
+    bool_value: bool | None = None
+    string_value: str | None = None
+    number_value: MetadataNumberValue | None = None
+    json_value: MetadataJSONValue | None = None
+
+    @classmethod
+    def of_bytes(cls, value: bytes) -> "MetadataTypedValue":
+        return cls(kind="bytes", bytes_value=bytes(value))
+
+    @classmethod
+    def of_bool(cls, value: bool) -> "MetadataTypedValue":
+        return cls(kind="bool", bool_value=value)
+
+    @classmethod
+    def of_string(cls, value: str) -> "MetadataTypedValue":
+        return cls(kind="string", string_value=value)
+
+    @classmethod
+    def of_number(cls, value: MetadataNumberValue) -> "MetadataTypedValue":
+        return cls(kind="number", number_value=value)
+
+    @classmethod
+    def of_json(cls, value: MetadataJSONValue) -> "MetadataTypedValue":
+        return cls(kind="json", json_value=value)
+
+    def normalized_kind(self) -> str:
+        return self.kind.strip()
+
+    def to_raw_value(self) -> bytes:
+        """按 turntf metadata 语义把 typed 值编码为原始 bytes。"""
+        kind = self.normalized_kind()
+        if kind == "bytes":
+            if self.bytes_value is None:
+                raise ValueError("bytes_value is required")
+            return bytes(self.bytes_value)
+        if kind == "bool":
+            if not isinstance(self.bool_value, bool):
+                raise ValueError("bool_value is required")
+            return b"true" if self.bool_value else b"false"
+        if kind == "string":
+            if self.string_value is None or not isinstance(self.string_value, str):
+                raise ValueError("string_value is required")
+            return json.dumps(self.string_value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if kind == "number":
+            return _normalize_metadata_number_text(self.number_value).encode("utf-8")
+        if kind == "json":
+            return _compact_metadata_json_text(self.json_value).encode("utf-8")
+        raise ValueError(f"unsupported kind {self.kind!r}")
+
+    def to_http_json(self) -> str:
+        """将 typed 值编码为 HTTP 请求体中的 ``typed_value`` JSON 片段。"""
+        kind = self.normalized_kind()
+        if kind == "bytes":
+            if self.bytes_value is None:
+                raise ValueError("bytes_value is required")
+            payload = base64.b64encode(self.bytes_value).decode("ascii")
+            return '{"kind":"bytes","bytes_value":' + json.dumps(payload) + "}"
+        if kind == "bool":
+            if not isinstance(self.bool_value, bool):
+                raise ValueError("bool_value is required")
+            return '{"kind":"bool","bool_value":' + json.dumps(self.bool_value) + "}"
+        if kind == "string":
+            if self.string_value is None or not isinstance(self.string_value, str):
+                raise ValueError("string_value is required")
+            return (
+                '{"kind":"string","string_value":'
+                + json.dumps(self.string_value, ensure_ascii=False, separators=(",", ":"))
+                + "}"
+            )
+        if kind == "number":
+            return (
+                '{"kind":"number","number_value":'
+                + _normalize_metadata_number_text(self.number_value)
+                + "}"
+            )
+        if kind == "json":
+            return (
+                '{"kind":"json","json_value":'
+                + _compact_metadata_json_text(self.json_value)
+                + "}"
+            )
+        raise ValueError(f"unsupported kind {self.kind!r}")
+
+    @classmethod
+    def from_raw_value(cls, raw: bytes) -> "MetadataTypedValue | None":
+        """从原始 metadata bytes 派生稳定的 typed 视图。"""
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        stripped = text.strip()
+        if stripped == "":
+            return None
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, bool):
+            return cls.of_bool(parsed)
+        if isinstance(parsed, str):
+            return cls.of_string(parsed)
+        if isinstance(parsed, (int, float)) and not isinstance(parsed, bool):
+            return cls.of_number(stripped)
+        return cls.of_json(parsed)
+
+
+def _normalize_metadata_number_text(value: MetadataNumberValue | None) -> str:
+    if value is None or isinstance(value, bool):
+        raise ValueError("number_value is required")
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        try:
+            return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        except ValueError as exc:
+            raise ValueError("number_value must be a JSON number") from exc
+    if not isinstance(value, str):
+        raise ValueError("number_value must be a string, int, or float")
+    stripped = value.strip()
+    if stripped == "":
+        raise ValueError("number_value is required")
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        raise ValueError("number_value must be a JSON number") from exc
+    if isinstance(parsed, bool) or not isinstance(parsed, (int, float)):
+        raise ValueError("number_value must be a JSON number")
+    return stripped
+
+
+def _compact_metadata_json_text(value: MetadataJSONValue | None) -> str:
+    if value is None:
+        raise ValueError("json_value is required")
+    try:
+        return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("json_value must be valid JSON") from exc
 
 
 @dataclass(slots=True, frozen=True, init=False)
@@ -273,6 +439,7 @@ class UserMetadata:
         deleted_at: 删除时间（HLC 时间戳字符串），空字符串表示未删除。
         expires_at: 过期时间，空字符串表示永不过期。
         origin_node_id: 创建此元数据的原始节点 ID。
+        typed_value: 根据原始 bytes 派生出的稳定 typed 视图；无法稳定解释时为 None。
     """
     owner: UserRef
     key: str
@@ -281,6 +448,7 @@ class UserMetadata:
     deleted_at: str
     expires_at: str
     origin_node_id: int
+    typed_value: MetadataTypedValue | None = None
 
 
 @dataclass(slots=True)
@@ -700,11 +868,14 @@ class UpsertUserMetadataRequest:
     用于写入或更新用户元数据的请求参数。
 
     Attributes:
-        value: 元数据的值（字节数据），不能为 None。
+        value: 原始 metadata bytes。与 ``typed_value`` 二选一。
         expires_at: 过期时间（可选），为空表示永不过期。
+        typed_value: HTTP typed_value 视图。与 ``value`` 二选一；
+                     WebSocket/protobuf 客户端会在本地先把它编码成 raw bytes，再走原有 wire 结构。
     """
-    value: bytes
+    value: bytes | None = None
     expires_at: str | None = None
+    typed_value: MetadataTypedValue | None = None
 
 
 @dataclass(slots=True)

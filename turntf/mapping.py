@@ -16,6 +16,7 @@ from .types import (
     Event,
     EventLogTrimStatus,
     LoggedInUser,
+    MetadataTypedValue,
     Message,
     MessageCursor,
     MessageTrimStatus,
@@ -37,6 +38,8 @@ from .types import (
     UserMetadataScanResult,
     UserRef,
 )
+
+_MISSING = object()
 
 
 def delivery_mode_to_proto(mode: DeliveryMode) -> int:
@@ -239,14 +242,16 @@ def user_metadata_from_proto(metadata: pb.UserMetadata | None) -> UserMetadata:
     """
     if metadata is None:
         raise ProtocolError("missing user_metadata")
+    value = bytes(metadata.value)
     return UserMetadata(
         owner=user_ref_from_proto(metadata.owner),
         key=metadata.key,
-        value=bytes(metadata.value),
+        value=value,
         updated_at=metadata.updated_at,
         deleted_at=metadata.deleted_at,
         expires_at=metadata.expires_at,
         origin_node_id=metadata.origin_node_id,
+        typed_value=MetadataTypedValue.from_raw_value(value),
     )
 
 
@@ -913,6 +918,41 @@ def users_from_http(items: list[dict[str, Any]]) -> list[User]:
     return [user_from_http(item) for item in items]
 
 
+def _user_metadata_typed_value_from_http(data: Any, raw_value: bytes) -> MetadataTypedValue | None:
+    derived = MetadataTypedValue.from_raw_value(raw_value)
+    if derived is not None:
+        return derived
+    if not isinstance(data, dict):
+        return None
+
+    kind = _str_value(data.get("kind")).strip()
+    if kind == "":
+        return None
+    if kind == "bytes":
+        return MetadataTypedValue.of_bytes(_base64_to_bytes(data.get("bytes_value")))
+    if kind == "bool":
+        bool_value = data.get("bool_value")
+        if not isinstance(bool_value, bool):
+            raise ProtocolError("unexpected metadata typed_value.bool_value")
+        return MetadataTypedValue.of_bool(bool_value)
+    if kind == "string":
+        string_value = data.get("string_value")
+        if not isinstance(string_value, str):
+            raise ProtocolError("unexpected metadata typed_value.string_value")
+        return MetadataTypedValue.of_string(string_value)
+    if kind == "number":
+        number_value = data.get("number_value")
+        if isinstance(number_value, bool) or not isinstance(number_value, (int, float, str)):
+            raise ProtocolError("unexpected metadata typed_value.number_value")
+        return MetadataTypedValue.of_number(number_value)
+    if kind == "json":
+        json_value = data.get("json_value", _MISSING)
+        if json_value is _MISSING:
+            raise ProtocolError("unexpected metadata typed_value.json_value")
+        return MetadataTypedValue.of_json(json_value)
+    raise ProtocolError(f"unsupported metadata typed_value kind {kind!r}")
+
+
 def user_metadata_from_http(data: dict[str, Any]) -> UserMetadata:
     """从 HTTP JSON 字典解析 UserMetadata 对象。
 
@@ -922,14 +962,16 @@ def user_metadata_from_http(data: dict[str, Any]) -> UserMetadata:
     Returns:
         UserMetadata 对象。
     """
+    value = _base64_to_bytes(data.get("value"))
     return UserMetadata(
         owner=user_ref_from_http(data.get("owner")),
         key=_str_value(data.get("key")),
-        value=_base64_to_bytes(data.get("value")),
+        value=value,
         updated_at=_str_value(data.get("updated_at")),
         deleted_at=_str_value(data.get("deleted_at")),
         expires_at=_str_value(data.get("expires_at")),
         origin_node_id=_int_value(data.get("origin_node_id")),
+        typed_value=_user_metadata_typed_value_from_http(data.get("typed_value"), value),
     )
 
 
