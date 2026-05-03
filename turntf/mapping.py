@@ -784,6 +784,18 @@ def logged_in_users_from_proto(items: list[pb.LoggedInUser]) -> list[LoggedInUse
     return [logged_in_user_from_proto(item) for item in items]
 
 
+def users_from_proto(items: list[pb.User]) -> list[User]:
+    """批量将 protobuf User 列表转换为 User 对象列表。
+
+    Args:
+        items: protobuf User 消息列表。
+
+    Returns:
+        User 对象列表。
+    """
+    return [user_from_proto(item) for item in items]
+
+
 def user_metadata_scan_result_from_proto(
     response: pb.ScanUserMetadataResponse | None,
 ) -> UserMetadataScanResult:
@@ -887,6 +899,18 @@ def user_from_http(data: dict[str, Any]) -> User:
         origin_node_id=_int_value(data.get("origin_node_id")),
         login_name=_str_value(data.get("login_name")),
     )
+
+
+def users_from_http(items: list[dict[str, Any]]) -> list[User]:
+    """批量将 HTTP User 字典列表转换为 User 对象列表。
+
+    Args:
+        items: HTTP JSON 用户字典列表。
+
+    Returns:
+        User 对象列表。
+    """
+    return [user_from_http(item) for item in items]
 
 
 def user_metadata_from_http(data: dict[str, Any]) -> UserMetadata:

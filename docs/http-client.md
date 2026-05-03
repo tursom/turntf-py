@@ -84,7 +84,7 @@ asyncio.run(main())
 async with AsyncClient(config) as ws_client:
     await ws_client.connect()
     token = await ws_client.http.login(4096, 1, "root")
-    users = await ws_client.http.list_node_logged_in_users(token, 4096)
+    users = await ws_client.http.list_users(token, name="alice")
 ```
 
 ### 注入外部 httpx 客户端
@@ -225,6 +225,14 @@ AsyncHTTPClient(
 - 支持 `prefix`、`after`、`limit` 参数
 
 ### 集群与运维
+
+#### `list_users(token, request=None, *, name=None, uid=None) -> list[User]`
+
+- 查询当前用户可通讯的活跃用户列表
+- 支持 `name` 大小写不敏感子串过滤
+- 支持 `uid=UserRef(node_id, user_id)` 精确过滤；HTTP 侧会自动编码成 `node_id:user_id`
+- 可同时传 `name` 和 `uid`，按 `AND` 组合
+- 普通用户查看其他联系人时，返回的 `User.login_name` 可能为空
 
 #### `list_cluster_nodes(token) -> list[ClusterNode]`
 

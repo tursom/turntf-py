@@ -130,7 +130,7 @@ class CursorStore(Protocol):
 长连接建立后，`AsyncClient` 可以做两类事情：
 
 - 处理服务端主动推送：`MessagePushed`、`PacketPushed`
-- 处理请求响应式 RPC：`send_message`、`ping`、`resolve_user_sessions` 等
+- 处理请求响应式 RPC：`send_message`、`ping`、`list_users`、`resolve_user_sessions` 等
 
 内部通过自增 `request_id` 维护 pending RPC 映射。每次 `_rpc()` 都会：
 

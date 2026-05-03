@@ -22,6 +22,7 @@ from .mapping import (
     user_from_http,
     user_metadata_from_http,
     user_metadata_scan_result_from_http,
+    users_from_http,
 )
 from .password import PasswordInput, plain_password
 from .types import (
@@ -33,6 +34,7 @@ from .types import (
     DeleteUserResult,
     DeliveryMode,
     Event,
+    ListUsersRequest,
     LoggedInUser,
     Message,
     OperationsStatus,
@@ -48,6 +50,7 @@ from .types import (
 from .validation import (
     validate_delivery_mode,
     validate_login_selector,
+    normalize_list_users_request,
     validate_positive_int,
     validate_user_metadata_key,
     validate_user_metadata_scan_request,
@@ -249,6 +252,42 @@ class AsyncHTTPClient:
                 login_name=request.login_name,
             ),
         )
+
+    async def list_users(
+        self,
+        token: str,
+        request: ListUsersRequest | None = None,
+        *,
+        name: str | None = None,
+        uid: UserRef | None = None,
+    ) -> list[User]:
+        """列出当前用户可通讯的活跃用户。
+
+        支持按名称子串和精确 uid 组合过滤。普通用户看到其他联系人时，
+        服务端可能会把 ``login_name`` 脱敏为空字符串。
+
+        Args:
+            token: 认证令牌。
+            request: 可选的过滤请求对象。
+            name: 可选的名称过滤关键字。与 request 二选一。
+            uid: 可选的精确用户过滤。与 request 二选一。
+
+        Returns:
+            当前用户可通讯的用户列表。
+        """
+        normalized = normalize_list_users_request(request, name=name, uid=uid, field="request")
+        query: dict[str, str] = {}
+        if normalized.name != "":
+            query["name"] = normalized.name
+        if normalized.uid is not None:
+            query["uid"] = f"{normalized.uid.node_id}:{normalized.uid.user_id}"
+        suffix = f"?{urlencode(query)}" if query else ""
+        response = await self._do_json("GET", f"/users{suffix}", token, None, {200})
+        items = _items_from_payload(response, "users", "items")
+        user_items: list[dict[str, Any]] = []
+        for item in items:
+            user_items.append(_expect_dict(item, "user item"))
+        return users_from_http(user_items)
 
     async def get_user(self, token: str, target: UserRef) -> User:
         """获取用户信息。

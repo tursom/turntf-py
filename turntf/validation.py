@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import re
 
-from .types import DeliveryMode, Message, MessageCursor, ScanUserMetadataRequest, SessionRef, UserRef
+from .types import (
+    DeliveryMode,
+    ListUsersRequest,
+    Message,
+    MessageCursor,
+    ScanUserMetadataRequest,
+    SessionRef,
+    UserRef,
+)
 
 _USER_METADATA_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]*$")
 _USER_METADATA_KEY_MAX_LENGTH = 128
@@ -75,6 +83,49 @@ def validate_user_ref(ref: UserRef, field: str = "user") -> None:
     """
     validate_positive_int(ref.node_id, f"{field}.node_id")
     validate_positive_int(ref.user_id, f"{field}.user_id")
+
+
+def normalize_list_users_request(
+    request: ListUsersRequest | None = None,
+    *,
+    name: str | None = None,
+    uid: UserRef | None = None,
+    field: str = "request",
+) -> ListUsersRequest:
+    """规范化用户列表过滤参数。
+
+    支持直接传入 ``ListUsersRequest``，也支持通过关键字参数传入 ``name`` / ``uid``。
+    ``uid = UserRef(0, 0)`` 会被视为“不按 uid 过滤”的兼容写法。
+
+    Args:
+        request: 可选的过滤请求对象。
+        name: 可选的名称过滤关键字。
+        uid: 可选的精确用户过滤。
+        field: 字段名称前缀，用于错误消息标识。
+
+    Returns:
+        规范化后的 ``ListUsersRequest``。
+
+    Raises:
+        ValueError: 如果同时混用 request 与独立关键字，或参数格式非法。
+    """
+    if request is not None and (name is not None or uid is not None):
+        raise ValueError(f"{field} must be provided either as request or name/uid keyword filters")
+    if request is None:
+        request = ListUsersRequest(name="" if name is None else name, uid=uid)
+    if not isinstance(request.name, str):
+        raise ValueError(f"{field}.name must be a string")
+
+    normalized_uid = request.uid
+    if normalized_uid is not None:
+        if not isinstance(normalized_uid, UserRef):
+            raise ValueError(f"{field}.uid must be a UserRef")
+        if normalized_uid.node_id == 0 and normalized_uid.user_id == 0:
+            normalized_uid = None
+        else:
+            validate_user_ref(normalized_uid, f"{field}.uid")
+
+    return ListUsersRequest(name=request.name.strip(), uid=normalized_uid)
 
 
 def validate_delivery_mode(mode: DeliveryMode) -> None:

@@ -45,6 +45,7 @@ from .mapping import (
     user_metadata_from_proto,
     user_metadata_scan_result_from_proto,
     user_ref_to_proto,
+    users_from_proto,
 )
 from .password import PasswordInput, plain_password
 from .relay import Relay
@@ -59,6 +60,7 @@ from .types import (
     DeleteUserResult,
     DeliveryMode,
     Event,
+    ListUsersRequest,
     LoggedInUser,
     LoginInfo,
     Message,
@@ -79,6 +81,7 @@ from .types import (
 from .validation import (
     validate_delivery_mode,
     validate_login_selector,
+    normalize_list_users_request,
     validate_positive_int,
     validate_session_ref,
     validate_user_metadata_key,
@@ -603,6 +606,39 @@ class AsyncClient:
                 login_name=request.login_name,
             )
         )
+
+    async def list_users(
+        self,
+        request: ListUsersRequest | None = None,
+        *,
+        name: str | None = None,
+        uid: UserRef | None = None,
+    ) -> list[User]:
+        """列出当前连接用户可通讯的活跃用户。
+
+        支持按名称子串和精确 uid 组合过滤。普通用户看到其他联系人时，
+        服务端可能会把 ``login_name`` 脱敏为空字符串。
+
+        Args:
+            request: 可选的过滤请求对象。
+            name: 可选的名称过滤关键字。与 request 二选一。
+            uid: 可选的精确用户过滤。与 request 二选一。
+
+        Returns:
+            当前连接用户可通讯的用户列表。
+        """
+        normalized = normalize_list_users_request(request, name=name, uid=uid, field="request")
+
+        def build(request_id: int) -> pb.ClientEnvelope:
+            message = pb.ListUsersRequest(request_id=request_id, name=normalized.name)
+            if normalized.uid is not None:
+                message.uid.CopyFrom(user_ref_to_proto(normalized.uid))
+            return pb.ClientEnvelope(list_users=message)
+
+        result = await self._rpc(build)
+        if not isinstance(result, list):
+            raise ProtocolError("missing items in list_users_response")
+        return result
 
     async def get_user(self, target: UserRef) -> User:
         """获取用户信息。
@@ -1434,6 +1470,12 @@ class AsyncClient:
             self._resolve_pending(
                 env.list_node_logged_in_users_response.request_id,
                 value=logged_in_users_from_proto(list(env.list_node_logged_in_users_response.items)),
+            )
+            return
+        if body == "list_users_response":
+            self._resolve_pending(
+                env.list_users_response.request_id,
+                value=users_from_proto(list(env.list_users_response.items)),
             )
             return
         if body == "resolve_user_sessions_response":

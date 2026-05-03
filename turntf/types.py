@@ -678,6 +678,22 @@ class UpdateUserRequest:
 
 
 @dataclass(slots=True)
+class ListUsersRequest:
+    """查询当前用户可通讯列表的过滤参数。
+
+    供 HTTP `GET /users` 和 WebSocket `list_users` RPC 共用。
+
+    Attributes:
+        name: 名称过滤，大小写不敏感子串匹配。空字符串表示不过滤。
+        uid: 可选的精确用户过滤。`None` 表示不过滤；
+             `UserRef(0, 0)` 也会被视为“不按 uid 过滤”的兼容写法。
+    """
+
+    name: str = ""
+    uid: UserRef | None = None
+
+
+@dataclass(slots=True)
 class UpsertUserMetadataRequest:
     """创建或更新用户元数据请求。
 

@@ -11,6 +11,7 @@ from turntf import (
     AsyncHTTPClient,
     CreateUserRequest,
     DeliveryMode,
+    ListUsersRequest,
     ScanUserMetadataRequest,
     SessionRef,
     UpdateUserRequest,
@@ -585,6 +586,157 @@ def test_http_client_list_node_logged_in_users_requires_node_id() -> None:
                 await client.list_node_logged_in_users("token", 0)
             except ValueError as exc:
                 assert "node_id is required" in str(exc)
+            else:
+                raise AssertionError("expected validation error")
+        finally:
+            await client.close()
+            await inner.aclose()
+
+    asyncio.run(main())
+
+
+def test_http_client_list_users_supports_filters() -> None:
+    async def main() -> None:
+        seen: list[tuple[str | None, str | None]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert request.method == "GET"
+            assert request.url.path == "/users"
+            assert request.headers["Authorization"] == "Bearer token"
+
+            name = request.url.params.get("name")
+            uid = request.url.params.get("uid")
+            seen.append((name, uid))
+
+            if name is None and uid is None:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "node_id": 4096,
+                            "user_id": 1025,
+                            "username": "alice",
+                            "login_name": "alice.login",
+                            "role": "user",
+                            "profile": {"display_name": "Alice"},
+                        },
+                        {
+                            "node_id": 4096,
+                            "user_id": 1027,
+                            "username": "carol",
+                            "login_name": "",
+                            "role": "user",
+                            "profile": {"display_name": "Carol Visible"},
+                        },
+                    ],
+                )
+            if name == "Carol Visible" and uid is None:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "node_id": 4096,
+                            "user_id": 1027,
+                            "username": "carol",
+                            "login_name": "",
+                            "role": "user",
+                            "profile": {"display_name": "Carol Visible"},
+                        }
+                    ],
+                )
+            if name is None and uid == "4096:1027":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "node_id": 4096,
+                            "user_id": 1027,
+                            "username": "carol",
+                            "login_name": "",
+                            "role": "user",
+                            "profile": {"display_name": "Carol Visible"},
+                        }
+                    ],
+                )
+            if name == "carol" and uid == "4096:1027":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "node_id": 4096,
+                            "user_id": 1027,
+                            "username": "carol",
+                            "login_name": "",
+                            "role": "user",
+                            "profile": {"display_name": "Carol Visible"},
+                        }
+                    ],
+                )
+            raise AssertionError(f"unexpected filters: name={name!r}, uid={uid!r}")
+
+        inner = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        client = AsyncHTTPClient("http://turntf.test", client=inner)
+        try:
+            users = await client.list_users("token")
+            assert [user.user_id for user in users] == [1025, 1027]
+            assert users[0].login_name == "alice.login"
+            assert users[1].login_name == ""
+
+            by_name = await client.list_users("token", name="  Carol Visible  ")
+            assert [user.user_id for user in by_name] == [1027]
+
+            by_uid = await client.list_users("token", uid=UserRef(node_id=4096, user_id=1027))
+            assert [user.user_id for user in by_uid] == [1027]
+
+            combined = await client.list_users(
+                "token",
+                ListUsersRequest(name="carol", uid=UserRef(node_id=4096, user_id=1027)),
+            )
+            assert [user.user_id for user in combined] == [1027]
+
+            sentinel = await client.list_users(
+                "token",
+                ListUsersRequest(uid=UserRef(node_id=0, user_id=0)),
+            )
+            assert [user.user_id for user in sentinel] == [1025, 1027]
+        finally:
+            await client.close()
+            await inner.aclose()
+
+        assert seen == [
+            (None, None),
+            ("Carol Visible", None),
+            (None, "4096:1027"),
+            ("carol", "4096:1027"),
+            (None, None),
+        ]
+
+    asyncio.run(main())
+
+
+def test_http_client_list_users_validation() -> None:
+    async def main() -> None:
+        inner = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200)))
+        client = AsyncHTTPClient("http://127.0.0.1:8080", client=inner)
+        try:
+            try:
+                await client.list_users(
+                    "token",
+                    ListUsersRequest(uid=UserRef(node_id=4096, user_id=0)),
+                )
+            except ValueError as exc:
+                assert "request.uid.user_id is required" in str(exc)
+            else:
+                raise AssertionError("expected validation error")
+
+            try:
+                await client.list_users(
+                    "token",
+                    ListUsersRequest(name="alice"),
+                    name="bob",
+                )
+            except ValueError as exc:
+                assert "request must be provided either as request or name/uid keyword filters" in str(exc)
             else:
                 raise AssertionError("expected validation error")
         finally:

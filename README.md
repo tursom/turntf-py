@@ -79,6 +79,9 @@ async def main() -> None:
         fetched = await client.get_user(token, UserRef(node_id=4096, user_id=user.user_id))
         print("fetched:", fetched.username)
 
+        contacts = await client.list_users(token, name="alice")
+        print("communicable users:", [item.user_id for item in contacts])
+
 
 asyncio.run(main())
 ```
@@ -181,7 +184,7 @@ from turntf import (
     Event, ClusterNode, LoggedInUser,
     LoginInfo, DeliveryMode,
     ResolvedSession, ResolvedUserSessions, OnlineNodePresence,
-    CreateUserRequest, UpdateUserRequest, DeleteUserResult,
+    CreateUserRequest, UpdateUserRequest, DeleteUserResult, ListUsersRequest,
     UpsertUserMetadataRequest, ScanUserMetadataRequest,
     UserMetadata, UserMetadataScanResult,
     RelayAccepted,

@@ -11,6 +11,7 @@ from turntf import (
     CreateUserRequest,
     Credentials,
     DeliveryMode,
+    ListUsersRequest,
     Message,
     MessageCursor,
     NopHandler,
@@ -297,6 +298,140 @@ def test_client_transient_only_and_realtime_path() -> None:
         assert observed["login_name"] == "alice.login"
         assert observed["has_user"] is False
         assert observed["path"] == "wss://turntf.test/base/ws/realtime"
+
+    asyncio.run(main())
+
+
+def test_client_list_users_supports_filters() -> None:
+    async def main() -> None:
+        dialer = FakeDialer()
+
+        async def server_logic() -> None:
+            conn = await dialer.connections.get()
+            await conn.server_recv()
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    login_response=pb.LoginResponse(
+                        user=pb.User(
+                            node_id=4096,
+                            user_id=1025,
+                            username="alice",
+                            role="user",
+                            login_name="alice.login",
+                        ),
+                        protocol_version="client-v1alpha2",
+                        session_ref=pb_session_ref("sess-list-users"),
+                    )
+                )
+            )
+
+            first_req = await conn.server_recv()
+            assert first_req.list_users.name == "carol"
+            assert first_req.list_users.HasField("uid") is False
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    list_users_response=pb.ListUsersResponse(
+                        request_id=first_req.list_users.request_id,
+                        items=[
+                            pb.User(
+                                node_id=4096,
+                                user_id=1027,
+                                username="carol",
+                                role="user",
+                                profile_json=b'{"display_name":"Carol Visible"}',
+                                login_name="",
+                            )
+                        ],
+                        count=1,
+                    )
+                )
+            )
+
+            second_req = await conn.server_recv()
+            assert second_req.list_users.name == ""
+            assert second_req.list_users.HasField("uid") is False
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    list_users_response=pb.ListUsersResponse(
+                        request_id=second_req.list_users.request_id,
+                        items=[
+                            pb.User(
+                                node_id=4096,
+                                user_id=1025,
+                                username="alice",
+                                role="user",
+                                login_name="alice.login",
+                            ),
+                            pb.User(
+                                node_id=4096,
+                                user_id=1027,
+                                username="carol",
+                                role="user",
+                                profile_json=b'{"display_name":"Carol Visible"}',
+                                login_name="",
+                            ),
+                        ],
+                        count=2,
+                    )
+                )
+            )
+
+            third_req = await conn.server_recv()
+            assert third_req.list_users.name == "carol"
+            assert third_req.list_users.uid.node_id == 4096
+            assert third_req.list_users.uid.user_id == 1027
+            await conn.server_send(
+                pb.ServerEnvelope(
+                    list_users_response=pb.ListUsersResponse(
+                        request_id=third_req.list_users.request_id,
+                        items=[
+                            pb.User(
+                                node_id=4096,
+                                user_id=1027,
+                                username="carol",
+                                role="user",
+                                profile_json=b'{"display_name":"Carol Visible"}',
+                                login_name="",
+                            )
+                        ],
+                        count=1,
+                    )
+                )
+            )
+
+        server_task = asyncio.create_task(server_logic())
+        client = FakeAsyncClient(
+            Config(
+                base_url="http://turntf.test",
+                credentials=Credentials(
+                    node_id=4096,
+                    user_id=1025,
+                    password=plain_password("alice-password"),
+                ),
+                request_timeout=1.0,
+                ping_interval=3600.0,
+            ),
+            dialer,
+        )
+        try:
+            await client.connect()
+
+            by_name = await client.list_users(name="  carol  ")
+            assert [user.user_id for user in by_name] == [1027]
+            assert by_name[0].login_name == ""
+
+            sentinel = await client.list_users(ListUsersRequest(uid=UserRef(node_id=0, user_id=0)))
+            assert [user.user_id for user in sentinel] == [1025, 1027]
+            assert sentinel[0].login_name == "alice.login"
+
+            combined = await client.list_users(
+                ListUsersRequest(name="carol", uid=UserRef(node_id=4096, user_id=1027))
+            )
+            assert [user.user_id for user in combined] == [1027]
+
+            await server_task
+        finally:
+            await client.close()
 
     asyncio.run(main())
 

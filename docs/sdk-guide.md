@@ -71,7 +71,7 @@ async def main() -> None:
 
         # 使用 HTTP 客户端做管理操作
         token = await client.http.login(4096, 1, "root")
-        users = await client.http.list_node_logged_in_users(token, 4096)
+        users = await client.http.list_users(token, name="alice")
 
         # 使用 WS 做实时操作
         msg = await client.send_message(user_ref, b"hello")
@@ -190,6 +190,9 @@ async def main() -> None:
 
         fetched = await client.get_user(token, UserRef(node_id=4096, user_id=user.user_id))
         print("fetched:", fetched.username)
+
+        contacts = await client.list_users(token, name="alice")
+        print("communicable users:", [item.user_id for item in contacts])
 
 
 asyncio.run(main())
